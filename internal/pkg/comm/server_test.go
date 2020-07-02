@@ -63,23 +63,6 @@ VQQLDAtIeXBlcmxlZGdlcjESMBAGA1UEAwwJbG9jYWxob3N0MFkwEwYHKoZIzj0C
 -----END CERTIFICATE-----
 `
 
-var pemNoCertificateHeader = `-----BEGIN NOCERT-----
-MIICRDCCAemgAwIBAgIJALwW//dz2ZBvMAoGCCqGSM49BAMCMH4xCzAJBgNVBAYT
-AlVTMRMwEQYDVQQIDApDYWxpZm9ybmlhMRYwFAYDVQQHDA1TYW4gRnJhbmNpc2Nv
-MRgwFgYDVQQKDA9MaW51eEZvdW5kYXRpb24xFDASBgNVBAsMC0h5cGVybGVkZ2Vy
-MRIwEAYDVQQDDAlsb2NhbGhvc3QwHhcNMTYxMjA0MjIzMDE4WhcNMjYxMjAyMjIz
-MDE4WjB+MQswCQYDVQQGEwJVUzETMBEGA1UECAwKQ2FsaWZvcm5pYTEWMBQGA1UE
-BwwNU2FuIEZyYW5jaXNjbzEYMBYGA1UECgwPTGludXhGb3VuZGF0aW9uMRQwEgYD
-VQQLDAtIeXBlcmxlZGdlcjESMBAGA1UEAwwJbG9jYWxob3N0MFkwEwYHKoZIzj0C
-AQYIKoZIzj0DAQcDQgAEu2FEZVSr30Afey6dwcypeg5P+BuYx5JSYdG0/KJIBjWK
-nzYo7FEmgMir7GbNh4pqA8KFrJZkPuxMgnEJBZTv+6NQME4wHQYDVR0OBBYEFAWO
-4bfTEr2R6VYzQYrGk/2VWmtYMB8GA1UdIwQYMBaAFAWO4bfTEr2R6VYzQYrGk/2V
-WmtYMAwGA1UdEwQFMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIhAIelqGdxPMHmQqRF
-zA85vv7JhfMkvZYGPELC7I2K8V7ZAiEA9KcthV3HtDXKNDsA6ULT+qUkyoHRzCzr
-A4QaL2VU6i4=
------END NOCERT-----
-`
-
 var testOrgs = []testOrg{}
 
 func init() {
@@ -635,17 +618,33 @@ func TestNewSecureGRPCServer(t *testing.T) {
 	_, err = invokeEmptyCall(testAddress, grpc.WithTransportCredentials(creds))
 	assert.NoError(t, err, "client failed to invoke the EmptyCall service")
 
+	// Test TLS versions which should be valid
 	tlsVersions := map[string]uint16{
+		"TLS12": tls.VersionTLS12,
+		"TLS13": tls.VersionTLS13,
+	}
+	for name, tlsVersion := range tlsVersions {
+		tlsVersion := tlsVersion
+
+		t.Run(name, func(t *testing.T) {
+			creds := credentials.NewTLS(&tls.Config{RootCAs: certPool, MinVersion: tlsVersion, MaxVersion: tlsVersion})
+			_, err := invokeEmptyCall(testAddress, grpc.WithTransportCredentials(creds), grpc.WithBlock())
+			assert.NoError(t, err)
+		})
+	}
+
+	// Test TLS versions which should be invalid
+	tlsVersions = map[string]uint16{
 		"SSL30": tls.VersionSSL30,
 		"TLS10": tls.VersionTLS10,
 		"TLS11": tls.VersionTLS11,
 	}
-	for name, version := range tlsVersions {
-		version := version
+	for name, tlsVersion := range tlsVersions {
+		tlsVersion := tlsVersion
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			creds := credentials.NewTLS(&tls.Config{RootCAs: certPool, MinVersion: version, MaxVersion: version})
+			creds := credentials.NewTLS(&tls.Config{RootCAs: certPool, MinVersion: tlsVersion, MaxVersion: tlsVersion})
 			_, err := invokeEmptyCall(testAddress, grpc.WithTransportCredentials(creds), grpc.WithBlock())
 			assert.Error(t, err, "should not have been able to connect with TLS version < 1.2")
 			assert.Contains(t, err.Error(), "context deadline exceeded")
@@ -683,6 +682,8 @@ func TestVerifyCertificateCallback(t *testing.T) {
 		tlsCfg := &tls.Config{
 			Certificates: []tls.Certificate{cert},
 			RootCAs:      x509.NewCertPool(),
+			MinVersion:   tls.VersionTLS12,
+			MaxVersion:   tls.VersionTLS12,
 		}
 		tlsCfg.RootCAs.AppendCertsFromPEM(ca.CertBytes())
 
@@ -963,134 +964,6 @@ func TestMutualAuth(t *testing.T) {
 	}
 }
 
-func TestAppendWithInvalidBytes(t *testing.T) {
-	// TODO: revisit when msp serialization without PEM type is resolved
-	t.Skip()
-	t.Parallel()
-
-	noPEMData := [][]byte{[]byte("badcert1"), []byte("badCert2")}
-
-	// get the config for one of our Org1 test servers
-	serverConfig := testOrgs[0].testServers([][]byte{})[0].config
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	assert.NoError(t, err, "listen failed")
-	defer lis.Close()
-
-	// create a GRPCServer
-	srv, err := comm.NewGRPCServerFromListener(lis, serverConfig)
-	assert.NoError(t, err, "failed to create server from listener")
-
-	// append nonPEMData
-	err = srv.AppendClientRootCAs(noPEMData)
-	assert.Error(t, err, "expected error - no pem data")
-
-	// apend PEM without CERTIFICATE header
-	err = srv.AppendClientRootCAs([][]byte{[]byte(pemNoCertificateHeader)})
-	assert.Error(t, err, "expected error - missing CERTIFCATE header")
-
-	// append bad PEM data
-	err = srv.AppendClientRootCAs([][]byte{[]byte(badPEM)})
-	assert.Error(t, err, "expected error - parsing bad PEM data")
-}
-
-func TestAppendClientRootCAs(t *testing.T) {
-	t.Parallel()
-
-	// get the config for one of our Org1 test servers
-	serverConfig := testOrgs[0].testServers([][]byte{})[0].config
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	assert.NoError(t, err, "failed to create listener")
-	defer lis.Close()
-	address := lis.Addr().String()
-
-	// create a GRPCServer
-	srv, err := comm.NewGRPCServerFromListener(lis, serverConfig)
-	assert.NoError(t, err, "failed to create GRPCServer")
-
-	// register the GRPC test server and start the GRPCServer
-	testpb.RegisterEmptyServiceServer(srv.Server(), &emptyServiceServer{})
-
-	go srv.Start()
-	defer srv.Stop()
-
-	//should not be needed but just in case
-	time.Sleep(10 * time.Millisecond)
-
-	// try to connect with untrusted clients from Org2 children
-	clientConfig1 := testOrgs[1].childOrgs[0].trustedClients([][]byte{testOrgs[0].rootCA})[0]
-	clientConfig2 := testOrgs[1].childOrgs[1].trustedClients([][]byte{testOrgs[0].rootCA})[0]
-	clientConfigs := []*tls.Config{clientConfig1, clientConfig2}
-
-	for _, clientConfig := range clientConfigs {
-		// we expect failure as these are not trusted clients
-		_, err = invokeEmptyCall(address, grpc.WithTransportCredentials(credentials.NewTLS(clientConfig)))
-		assert.Error(t, err, "expected client connection to be rejected")
-	}
-
-	// now append the root CAs for the untrusted clients
-	err = srv.AppendClientRootCAs([][]byte{testOrgs[1].childOrgs[0].rootCA, testOrgs[1].childOrgs[1].rootCA})
-	assert.NoError(t, err, "failed to append client root CAs")
-
-	// now try to connect again
-	for _, clientConfig := range clientConfigs {
-		// we expect success as these are now trusted clients
-		_, err = invokeEmptyCall(address, grpc.WithTransportCredentials(credentials.NewTLS(clientConfig)))
-		assert.NoError(t, err, "expected client connection to be accepted")
-	}
-}
-
-// test for race conditions - test locally using "go test -race -run TestConcurrentAppendRemoveSet"
-func TestConcurrentAppendSet(t *testing.T) {
-	t.Parallel()
-
-	// get the config for one of our Org1 test servers and include client CAs from
-	// Org2 child orgs
-	testServers := testOrgs[0].testServers([][]byte{testOrgs[1].childOrgs[0].rootCA, testOrgs[1].childOrgs[1].rootCA})
-	serverConfig := testServers[0].config
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	assert.NoError(t, err, "listen failed")
-	defer lis.Close()
-
-	// create a GRPCServer
-	srv, err := comm.NewGRPCServerFromListener(lis, serverConfig)
-	assert.NoError(t, err, "failed to create GRPCServer")
-
-	// register the GRPC test server and start the GRPCServer
-	testpb.RegisterEmptyServiceServer(srv.Server(), &emptyServiceServer{})
-	go srv.Start()
-	defer srv.Stop()
-
-	errCh := make(chan error, 3)
-	go func() {
-		// set client root CAs
-		err := srv.SetClientRootCAs([][]byte{testOrgs[1].childOrgs[0].rootCA, testOrgs[1].childOrgs[1].rootCA})
-		errCh <- errors.WithMessage(err, "failed to set client root CAs")
-	}()
-
-	go func() {
-		// now append the root CAs for the untrusted clients
-		err := srv.AppendClientRootCAs([][]byte{testOrgs[1].childOrgs[0].rootCA, testOrgs[1].childOrgs[1].rootCA})
-		errCh <- errors.WithMessage(err, "failed to append client root CAs")
-	}()
-
-	go func() {
-		// set client root CAs
-		err := srv.SetClientRootCAs([][]byte{testOrgs[1].childOrgs[0].rootCA, testOrgs[1].childOrgs[1].rootCA})
-		errCh <- errors.WithMessage(err, "failed to set client root CAs")
-	}()
-
-	for i := 0; i < 3; i++ {
-		timer := time.NewTimer(5 * time.Second)
-		select {
-		case <-timer.C:
-			t.Fatal("go routine did not complete within timeout")
-		case err := <-errCh:
-			assert.NoError(t, err, "unexpected error from concurrent routine")
-		}
-		timer.Stop()
-	}
-}
-
 func TestSetClientRootCAs(t *testing.T) {
 	t.Parallel()
 
@@ -1244,34 +1117,6 @@ func TestUpdateTLSCert(t *testing.T) {
 func TestCipherSuites(t *testing.T) {
 	t.Parallel()
 
-	// default cipher suites
-	defaultCipherSuites := []uint16{
-		tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-		tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-		tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-		tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-		tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
-		tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
-	}
-	// the other cipher suites supported by Go
-	otherCipherSuites := []uint16{
-		tls.TLS_RSA_WITH_RC4_128_SHA,
-		tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA,
-		tls.TLS_RSA_WITH_AES_128_CBC_SHA,
-		tls.TLS_RSA_WITH_AES_256_CBC_SHA,
-		tls.TLS_RSA_WITH_AES_128_CBC_SHA256,
-		tls.TLS_ECDHE_ECDSA_WITH_RC4_128_SHA,
-		tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
-		tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
-		tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA,
-		tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,
-		tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
-		tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
-		tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
-		tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,
-		tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-		tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
-	}
 	certPEM, err := ioutil.ReadFile(filepath.Join("testdata", "certs", "Org1-server1-cert.pem"))
 	assert.NoError(t, err)
 	keyPEM, err := ioutil.ReadFile(filepath.Join("testdata", "certs", "Org1-server1-key.pem"))
@@ -1288,24 +1133,48 @@ func TestCipherSuites(t *testing.T) {
 			UseTLS:      true,
 		}}
 
+	fabricDefaultCipherSuite := func(cipher uint16) bool {
+		for _, defaultCipher := range comm.DefaultTLSCipherSuites {
+			if cipher == defaultCipher {
+				return true
+			}
+		}
+		return false
+	}
+
+	var otherCipherSuites []uint16
+	for _, cipher := range append(tls.CipherSuites(), tls.InsecureCipherSuites()...) {
+		if !fabricDefaultCipherSuite(cipher.ID) {
+			otherCipherSuites = append(otherCipherSuites, cipher.ID)
+		}
+	}
+
 	var tests = []struct {
 		name          string
 		clientCiphers []uint16
 		success       bool
+		versions      []uint16
 	}{
 		{
-			name:    "server default / client all",
-			success: true,
+			name:     "server default / client all",
+			success:  true,
+			versions: []uint16{tls.VersionTLS12, tls.VersionTLS13},
 		},
 		{
 			name:          "server default / client match",
-			clientCiphers: defaultCipherSuites,
+			clientCiphers: comm.DefaultTLSCipherSuites,
 			success:       true,
+			// Skip TLS1.3 as it ignores the Fabric DefaultCipherSuites
+			// https://github.com/golang/go/issues/29349
+			versions: []uint16{tls.VersionTLS12},
 		},
 		{
 			name:          "server default / client no match",
 			clientCiphers: otherCipherSuites,
 			success:       false,
+			// Skip TLS1.3 as it ignores the Fabric DefaultCipherSuites
+			// https://github.com/golang/go/issues/29349
+			versions: []uint16{tls.VersionTLS12},
 		},
 	}
 
@@ -1322,16 +1191,20 @@ func TestCipherSuites(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			tlsConfig := &tls.Config{
-				RootCAs:      certPool,
-				CipherSuites: test.clientCiphers,
-			}
-			_, err := tls.Dial("tcp", testAddress, tlsConfig)
-			if test.success {
-				assert.NoError(t, err)
-			} else {
-				assert.Error(t, err, "expected handshake failure")
-				assert.Contains(t, err.Error(), "handshake failure")
+			for _, tlsVersion := range test.versions {
+				tlsConfig := &tls.Config{
+					RootCAs:      certPool,
+					CipherSuites: test.clientCiphers,
+					MinVersion:   tlsVersion,
+					MaxVersion:   tlsVersion,
+				}
+				_, err := tls.Dial("tcp", testAddress, tlsConfig)
+				if test.success {
+					assert.NoError(t, err)
+				} else {
+					assert.Error(t, err, "expected handshake failure")
+					assert.Contains(t, err.Error(), "handshake failure")
+				}
 			}
 		})
 	}

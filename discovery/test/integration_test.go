@@ -172,8 +172,8 @@ func TestGreenPath(t *testing.T) {
 
 		// Ensure that the client handles correctly errors returned from the server
 		// in case of a bad request
-		returnedPeers, err = res.ForChannel("mychannel").Peers(nonExistentCollection)
-		assert.Equal(t, "collection col3 doesn't exist in collection config for chaincode cc2", err.Error())
+		_, err = res.ForChannel("mychannel").Peers(nonExistentCollection)
+		assert.EqualError(t, err, "collection col3 doesn't exist in collection config for chaincode cc2")
 	})
 
 	t.Run("Endorser chaincode to chaincode", func(t *testing.T) {
@@ -299,7 +299,7 @@ func TestRevocation(t *testing.T) {
 	assert.NotEmpty(t, peers)
 	assert.NoError(t, err)
 
-	res, err = client.Send(context.Background(), req, client.AuthInfo)
+	_, err = client.Send(context.Background(), req, client.AuthInfo)
 	assert.NoError(t, err)
 	// The amount of times deserializeIdentity was called should not have changed
 	// because requests should have hit the cache
@@ -974,7 +974,7 @@ func signECDSA(k *ecdsa.PrivateKey, digest []byte) (signature []byte, err error)
 		return nil, err
 	}
 
-	s, _, err = bccsp.ToLowS(&k.PublicKey, s)
+	s, err = bccsp.ToLowS(&k.PublicKey, s)
 	if err != nil {
 		return nil, err
 	}

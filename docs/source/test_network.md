@@ -21,7 +21,7 @@ current master branch, it is possible that you will encounter errors.
 ## Before you begin
 
 Before you can run the test network, you need to clone the `fabric-samples`
-repository and download the Fabric images. Make sure that that you have installed
+repository and download the Fabric images. Make sure that you have installed
 the [Prerequisites](prereqs.html) and [Installed the Samples, Binaries and Docker Images](install.html).
 
 ## Bring up the test network
@@ -54,9 +54,10 @@ Usage:
     -s <dbtype> - the database backend to use: goleveldb (default) or couchdb
     -r <max retry> - CLI times out after certain number of attempts (defaults to 5)
     -d <delay> - delay duration in seconds (defaults to 3)
-    -l <language> - the programming language of the chaincode to deploy: go (default), javascript, or java
+    -l <language> - the programming language of the chaincode to deploy: go (default), java, javascript, typescript
     -v <version>  - chaincode version. Must be a round number, 1, 2, 3, etc
     -i <imagetag> - the tag to be used to launch the network (defaults to "latest")
+    -cai <ca_imagetag> - the image tag to be used for CA (defaults to "1.4.6")
     -verbose - verbose mode
   network.sh -h (print this message)
 
@@ -280,7 +281,7 @@ followed the instructions to [install the Samples, Binaries and Docker Images](i
 You can find the `peer` binaries in the `bin` folder of the `fabric-samples`
 repository. Use the following command to add those binaries to your CLI Path:
 ```
-export PATH=${PWD}/../bin:${PWD}:$PATH
+export PATH=${PWD}/../bin:$PATH
 ```
 You also need to set the `FABRIC_CFG_PATH` to point to the `core.yaml` file in
 the `fabric-samples` repository:
@@ -328,7 +329,7 @@ Chaincodes are invoked when a network member wants to transfer or change an
 asset on the ledger. Use the following command to change the owner of a car on
 the ledger by invoking the fabcar chaincode:
 ```
-peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls true --cafile ${PWD}/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem -C mychannel -n fabcar --peerAddresses localhost:7051 --tlsRootCertFiles ${PWD}/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt --peerAddresses localhost:9051 --tlsRootCertFiles ${PWD}/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt -c '{"function":"changeCarOwner","Args":["CAR9","Dave"]}'
+peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile ${PWD}/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem -C mychannel -n fabcar --peerAddresses localhost:7051 --tlsRootCertFiles ${PWD}/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt --peerAddresses localhost:9051 --tlsRootCertFiles ${PWD}/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt -c '{"function":"changeCarOwner","Args":["CAR9","Dave"]}'
 ```
 
 If the command is successful, you should see the following response:
@@ -368,7 +369,7 @@ peer chaincode query -C mychannel -n fabcar -c '{"Args":["queryCar","CAR9"]}'
 
 The result will show that `"CAR9"` was transferred to Dave:
 ```
-Tou can find he {"make":"Holden","model":"Barina","colour":"brown","owner":"Dave"}
+{"make":"Holden","model":"Barina","colour":"brown","owner":"Dave"}
 ```
 
 ## Bring down the network
@@ -400,7 +401,7 @@ the [commercial paper tutorial](tutorial/commercial_paper.html) to explore a
 use case in which two organizations use a blockchain network to trade commercial
 paper.
 
-You can find the the complete list of Fabric tutorials on the [tutorials](tutorials.html)
+You can find the complete list of Fabric tutorials on the [tutorials](tutorials.html)
 page.
 
 ## Bring up the network with Certificate Authorities
@@ -493,7 +494,7 @@ establishes the identity's role and membership in the organization that operated
 the CA. You can use the following command to examine the MSP folder of the Org1
 admin user:
 ```
-tree organizations/peerOrganizations/org1.example.com/users/Admin/@org1.example.com/
+tree organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/
 ```
 The command will reveal the MSP folder structure and configuration file:
 ```
@@ -563,7 +564,7 @@ below provide a guided tour of what happens when you issue the command of
 - If you issue the `deployCC` command, `./network.sh` runs the ``deployCC.sh``
   script to install the **fabcar** chaincode on both peers and then define then
   chaincode on the channel. Once the chaincode definition is committed to the
-  channel, the peer cli initializes the chainocde using the `Init` and invokes
+  channel, the peer cli initializes the chaincode using the `Init` and invokes
   the chaincode to put initial data on the ledger.
 
 ## Troubleshooting

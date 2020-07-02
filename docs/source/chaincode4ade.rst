@@ -6,7 +6,7 @@ What is Chaincode?
 
 Chaincode is a program, written in `Go <https://golang.org>`_, `Node.js <https://nodejs.org>`_,
 or `Java <https://java.com/en/>`_ that implements a prescribed interface.
-Chaincode runs in a seperate process from the peer and initializes and manages
+Chaincode runs in a separate process from the peer and initializes and manages
 the ledger state through transactions submitted by applications.
 
 A chaincode typically handles business logic agreed to by members of the
@@ -24,6 +24,11 @@ are a network operator who is deploying a chaincode to running network,
 visit the :doc:`deploy_chaincode` tutorial and the :doc:`chaincode_lifecycle`
 concept topic.
 
+This tutorial provides an overview of the low level APIs provided by the Fabric
+Chaincode Shim API. You can also use the higher level APIs provided by the
+Fabric Contract API. To learn more about developing smart contracts
+using the Fabric contract API, visit the :doc:`developapps/smartcontract` topic.
+
 Chaincode API
 -------------
 
@@ -33,30 +38,25 @@ documentation of the Chaincode Shim API for different languages below:
 
   - `Go <https://godoc.org/github.com/hyperledger/fabric-chaincode-go/shim#Chaincode>`__
   - `Node.js <https://hyperledger.github.io/fabric-chaincode-node/{BRANCH}/api/fabric-shim.ChaincodeInterface.html>`__
-  - `Java <https://hyperledger.github.io/fabric-chaincode-java/{BRANCH}/api/org/hyperledger/fabric/shim/Chaincode.html>`_
+  - `Java <https://hyperledger.github.io/fabric-chaincode-java/{BRANCH}/api/org/hyperledger/fabric/shim/Chaincode.html>`__
 
 In each language, the ``Invoke`` method is called by clients to submit transaction
 proposals. This method allows you to use the chaincode to read and write data on
 the channel ledger.
 
-You also need to include an ``Init`` method that will serve as the initialization
-function for your chaincode. This method will be called in order to initialize
-the chaincode when it is started or upgraded. By default, this function is never
-executed. However, you can use the chaincode definition to request that the ``Init``
-function be executed. If execution of ``Init`` is requested, fabric will ensure
-that ``Init`` is invoked before any other function and is only invoked once.
-This option provides you additional control over which users can initialize the
-chaincode and the ability to add initial data to the ledger. If you are using
-the peer CLI to approve the chaincode definition, use the ``--init-required``
-flag to request the execution of the ``Init`` function. Then call the ``Init``
-function by using the `peer chaincode invoke` command and passing the
-``--isInit`` flag. For more information, see :doc:`chaincode_lifecycle`.
+You also need to include an ``Init`` method in your chaincode that will serve as
+the initialization function. This function is required by the chaincode interface,
+but does not necessarily need to invoked by your applications. You can use the
+Fabric chaincode lifecycle process to specify whether the ``Init`` function must
+be called prior to Invokes. For more information, refer to the initialization
+parameter in the `Approving a chaincode definition <chaincode_lifecycle.html#step-three-approve-a-chaincode-definition-for-your-organization>`__
+step of the Fabric chaincode lifecycle documentation.
 
 The other interface in the chaincode "shim" APIs is the ``ChaincodeStubInterface``:
 
   - `Go <https://godoc.org/github.com/hyperledger/fabric-chaincode-go/shim#ChaincodeStubInterface>`__
   - `Node.js <https://hyperledger.github.io/fabric-chaincode-node/{BRANCH}/api/fabric-shim.ChaincodeStub.html>`__
-  - `Java <https://hyperledger.github.io/fabric-chaincode-java/{BRANCH}/api/org/hyperledger/fabric/shim/ChaincodeStub.html>`_
+  - `Java <https://hyperledger.github.io/fabric-chaincode-java/{BRANCH}/api/org/hyperledger/fabric/shim/ChaincodeStub.html>`__
 
 which is used to access and modify the ledger, and to make invocations between
 chaincodes.
@@ -75,21 +75,22 @@ Choosing a Location for the Code
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 If you haven't been doing programming in Go, you may want to make sure that
-you have :ref:`Go` installed and your system properly configured.
+you have `Go <https://golang.org>`_ installed and your system properly configured. We assume
+you are using a version that supports modules.
 
-Now, you will want to create a directory for your chaincode application as a
-child directory of ``$GOPATH/src/``.
+Now, you will want to create a directory for your chaincode application.
 
 To keep things simple, let's use the following command:
 
 .. code:: bash
 
-  mkdir -p $GOPATH/src/sacc && cd $GOPATH/src/sacc
+  mkdir sacc && cd sacc
 
-Now, let's create the source file that we'll fill in with code:
+Now, let's create the module and the source file that we'll fill in with code:
 
 .. code:: bash
 
+  go mod init sacc
   touch sacc.go
 
 Housekeeping
@@ -416,24 +417,19 @@ To add the client identity shim extension to your chaincode as a dependency, see
 
 Managing external dependencies for chaincode written in Go
 ----------------------------------------------------------
-Your Go chaincode requires packages (like the chaincode shim) that are not part
-of the Go standard library. These packages must be included in your chaincode
-package.
-
-There are `many tools available <https://github.com/golang/go/wiki/PackageManagementTools>`__
-for managing (or "vendoring") these dependencies.  The following demonstrates how to use
-``govendor``:
+Your Go chaincode depends on Go packages (like the chaincode shim) that are not
+part of the standard library. The source to these packages must be included in
+your chaincode package when it is installed to a peer. If you have structured
+your chaincode as a module, the easiest way to do this is to "vendor" the
+dependencies with ``go mod vendor`` before packaging your chaincode.
 
 .. code:: bash
 
-  govendor init
-  govendor add +external  // Add all external package, or
-  govendor add github.com/external/pkg // Add specific external package
+  go mod tidy
+  go mod vendor
 
-This imports the external dependencies into a local ``vendor`` directory.
-If you are vendoring the Fabric shim or shim extensions, clone the
-Fabric repository to your $GOPATH/src/github.com/hyperledger directory,
-before executing the govendor commands.
+This places the external dependencies for your chaincode into a local ``vendor``
+directory.
 
 Once dependencies are vendored in your chaincode directory, ``peer chaincode package``
 and ``peer chaincode install`` operations will then include code associated with the

@@ -154,6 +154,7 @@ func createRWset(t *testing.T, ccnames ...string) []byte {
 	rwset, err := rwsetBuilder.GetTxSimulationResults()
 	assert.NoError(t, err)
 	rwsetBytes, err := rwset.GetPubSimulationBytes()
+	assert.NoError(t, err)
 	return rwsetBytes
 }
 
@@ -717,6 +718,7 @@ func TestParallelValidation(t *testing.T) {
 		rwset, err := rwsetBuilder.GetTxSimulationResults()
 		assert.NoError(t, err)
 		rwsetBytes, err := rwset.GetPubSimulationBytes()
+		assert.NoError(t, err)
 		tx := getEnvWithSigner(ccID, nil, rwsetBytes, sig, t)
 		blockData = append(blockData, protoutil.MarshalOrPanic(tx))
 	}
@@ -1552,8 +1554,8 @@ func (exec *mockQueryExecutor) GetStateRangeScanIterator(namespace string, start
 	return args.Get(0).(ledger2.ResultsIterator), args.Error(1)
 }
 
-func (exec *mockQueryExecutor) GetStateRangeScanIteratorWithMetadata(namespace, startKey, endKey string, metadata map[string]interface{}) (ledger.QueryResultsIterator, error) {
-	args := exec.Called(namespace, startKey, endKey, metadata)
+func (exec *mockQueryExecutor) GetStateRangeScanIteratorWithPagination(namespace, startKey, endKey string, pageSize int32) (ledger.QueryResultsIterator, error) {
+	args := exec.Called(namespace, startKey, endKey, pageSize)
 	return args.Get(0).(ledger.QueryResultsIterator), args.Error(1)
 }
 
@@ -1562,8 +1564,8 @@ func (exec *mockQueryExecutor) ExecuteQuery(namespace, query string) (ledger2.Re
 	return args.Get(0).(ledger2.ResultsIterator), args.Error(1)
 }
 
-func (exec *mockQueryExecutor) ExecuteQueryWithMetadata(namespace, query string, metadata map[string]interface{}) (ledger.QueryResultsIterator, error) {
-	args := exec.Called(namespace, query, metadata)
+func (exec *mockQueryExecutor) ExecuteQueryWithPagination(namespace, query, bookmark string, pageSize int32) (ledger.QueryResultsIterator, error) {
+	args := exec.Called(namespace, query, bookmark, pageSize)
 	return args.Get(0).(ledger.QueryResultsIterator), args.Error(1)
 }
 
@@ -1925,10 +1927,6 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(m.Run())
-}
-
-func ToHex(q uint64) string {
-	return "0x" + strconv.FormatUint(q, 16)
 }
 
 func constructLedgerMgrWithTestDefaults(t *testing.T, testDir string) (*ledgermgmt.LedgerMgr, func()) {

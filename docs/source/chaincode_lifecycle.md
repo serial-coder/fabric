@@ -17,7 +17,7 @@ its state.
 
 In this concept topic, we will explore chaincode through the eyes of a
 blockchain network operator rather than an application developer. Chaincode
-operators can use this topic as a guide to how to use the Fabric chainode
+operators can use this topic as a guide to how to use the Fabric chaincode
 lifecycle to deploy and manage chaincode on their network.
 
 ## Deploying a chaincode
@@ -82,7 +82,7 @@ automatically create a file in this format.
 - The chaincode needs to be packaged in a tar file, ending with a `.tar.gz` file
   extension.
 - The tar file needs to contain two files (no directory): a metadata file
-  "metadata.json" and another tar containing the chaincode files.
+  "metadata.json" and another tar "code.tar.gz" containing the chaincode files.
 - "metadata.json" contains JSON that specifies the
   chaincode language, code path, and package label. You can see an example of
   a metadata file below:
@@ -149,13 +149,34 @@ consistent across organizations:
 - **Collection Configuration:** The path to a private data collection definition
   file associated with your chaincode. For more information about private data
   collections, see the [Private Data architecture reference](https://hyperledger-fabric.readthedocs.io/en/{BRANCH}/private-data-arch.html).
-- **Initialization:** All chaincode need to contain an ``Init`` function that is
-  used to initialize the chaincode. By default, this function is never executed.
-  However, you can use the chaincode definition to request that the ``Init``
-  function be callable. If execution of ``Init`` is requested, fabric will ensure
-  that ``Init`` is invoked before any other function and is only invoked once.
 - **ESCC/VSCC Plugins:** The name of a custom endorsement or validation
   plugin to be used by this chaincode.
+- **Initialization:** If you use the low level APIs provided by the Fabric Chaincode
+  Shim API, your chaincode needs to contain an `Init` function that is used to
+  initialize the chaincode. This function is required by the chaincode interface,
+  but does not necessarily need to invoked by your applications. When you approve
+  a chaincode definition, you can specify whether `Init` must be called prior to
+  Invokes. If you specify that `Init` is required, Fabric will ensure that the `Init`
+  function is invoked before any other function in the chaincode and is only invoked
+  once. Requesting the execution of the `Init` function allows you to implement
+  logic that is run when the chaincode is initialized, for example to set some
+  initial state. You will need to call `Init` to initialize the chaincode every
+  time you increment the version of a chaincode, assuming the chaincode definition
+  that increments the version indicates that `Init` is required.
+
+  If you are using the Fabric peer CLI, you can use the `--init-required` flag
+  when you approve and commit the chaincode definition to indicate that the `Init`
+  function must be called to initialize the new chaincode version. To call `Init`
+   using the Fabric peer CLI, use the `peer chaincode invoke` command and pass the
+  `--isInit` flag.
+
+  If you are using the Fabric contract API, you do not need to include an `Init`
+  method in your chaincode. However, you can still use the `--init-required` flag
+  to request that the chaincode be initialized by a call from your applications.
+  If you use the `--init-required` flag, you will need to pass the `--isInit` flag
+  or parameter to a chaincode call in order to initialize the chaincode every time
+  you increment the chaincode version. You can pass `--isInit` and initialize the
+  chaincode using any function in your chaincode.
 
 The chaincode definition also includes the **Package Identifier**. This is a
 required parameter for each organization that wants to use the chaincode. The
@@ -242,7 +263,7 @@ container on that peer.*
 ## Upgrade a chaincode
 
 You can upgrade a chaincode using the same Fabric lifecycle process as you used
-to install and start the chainocode. You can upgrade the chaincode binaries, or
+to install and start the chaincode. You can upgrade the chaincode binaries, or
 only update the chaincode policies. Follow these steps to upgrade a chaincode:
 
 1. **Repackage the chaincode:** You only need to complete this step if you are
@@ -407,20 +428,7 @@ definition. This allows channel members to install different chaincode binaries
 that use the same endorsement policy and read and write to data in the same
 chaincode namespace.
 
-Channel members can use this capability to install chaincode written in
-different languages and work with the language they are most comfortable. As
-long as the chaincode generates the same read-write sets, channel members using
-chaincode in different languages will be able to endorse transactions and commit
-them to the ledger. However, organizations should test that their chaincode
-is consistent and that they are able to generate valid endorsements before
-defining it on a channel in production.
-
-  ![Using different chaincode languages](lifecycle/Lifecycle-languages.png)
-
-*Org1 installs a package of the MYCC chaincode written in Go, while Org2
-installs MYCC written in Java.*
-
-Organizations can also use this capability to install smart contracts that
+Organizations can use this capability to install smart contracts that
 contain business logic that is specific to their organization. Each
 organization's smart contract could contain additional validation that the
 organization requires before their peers endorse a transaction. Each organization
