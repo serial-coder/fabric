@@ -142,6 +142,13 @@ func (p *Provider) Close() {
 	p.db.Close()
 }
 
+// Drop drops all the data for the given dbName
+func (p *Provider) Drop(dbName string) error {
+	dbHandle := p.GetDBHandle(dbName)
+	defer dbHandle.Close()
+	return dbHandle.deleteAll()
+}
+
 // DBHandle is an handle to a named db
 type DBHandle struct {
 	dbName    string
@@ -165,7 +172,7 @@ func (h *DBHandle) Delete(key []byte, sync bool) error {
 }
 
 // DeleteAll deletes all the keys that belong to the channel (dbName).
-func (h *DBHandle) DeleteAll() error {
+func (h *DBHandle) deleteAll() error {
 	iter, err := h.GetIterator(nil, nil)
 	if err != nil {
 		return err
@@ -195,7 +202,7 @@ func (h *DBHandle) DeleteAll() error {
 			}
 			logger.Infof("Have removed %d entries for channel %s in leveldb %s", numKeys, h.dbName, h.db.conf.DBPath)
 			batchSize = 0
-			batch = &leveldb.Batch{}
+			batch.Reset()
 		}
 	}
 	if batch.Len() > 0 {

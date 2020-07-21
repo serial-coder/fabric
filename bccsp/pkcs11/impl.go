@@ -28,7 +28,7 @@ var (
 func New(opts PKCS11Opts, keyStore bccsp.KeyStore) (bccsp.BCCSP, error) {
 	// Init config
 	conf := &config{}
-	err := conf.setSecurityLevel(opts.SecLevel, opts.HashFamily)
+	err := conf.setSecurityLevel(opts.Security, opts.Hash)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed initializing configuration")
 	}
@@ -38,7 +38,7 @@ func New(opts PKCS11Opts, keyStore bccsp.KeyStore) (bccsp.BCCSP, error) {
 		return nil, errors.New("Invalid bccsp.KeyStore instance. It must be different from nil")
 	}
 
-	swCSP, err := sw.NewWithParams(opts.SecLevel, opts.HashFamily, keyStore)
+	swCSP, err := sw.NewWithParams(opts.Security, opts.Hash, keyStore)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed initializing fallback SW BCCSP")
 	}
@@ -53,7 +53,17 @@ func New(opts PKCS11Opts, keyStore bccsp.KeyStore) (bccsp.BCCSP, error) {
 	}
 
 	sessions := make(chan pkcs11.SessionHandle, sessionCacheSize)
-	csp := &impl{swCSP, conf, ctx, sessions, slot, pin, lib, opts.SoftVerify, opts.Immutable}
+	csp := &impl{
+		BCCSP:      swCSP,
+		conf:       conf,
+		ctx:        ctx,
+		sessions:   sessions,
+		slot:       slot,
+		pin:        pin,
+		lib:        lib,
+		softVerify: opts.SoftwareVerify,
+		immutable:  opts.Immutable,
+	}
 	csp.returnSession(*session)
 	return csp, nil
 }

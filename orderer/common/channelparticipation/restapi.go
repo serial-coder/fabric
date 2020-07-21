@@ -63,7 +63,6 @@ type HTTPHandler struct {
 	config    localconfig.ChannelParticipation
 	registrar ChannelManagement
 	router    *mux.Router
-	// TODO skeleton
 }
 
 func NewHTTPHandler(config localconfig.ChannelParticipation, registrar ChannelManagement) *HTTPHandler {
@@ -76,14 +75,15 @@ func NewHTTPHandler(config localconfig.ChannelParticipation, registrar ChannelMa
 
 	handler.router.HandleFunc(urlWithChannelIDKey, handler.serveListOne).Methods(http.MethodGet)
 
-	handler.router.HandleFunc(urlWithChannelIDKey, handler.serveJoin).Methods(http.MethodPost).HeadersRegexp(
-		"Content-Type", "multipart/form-data*")
-	handler.router.HandleFunc(urlWithChannelIDKey, handler.serveBadContentType).Methods(http.MethodPost)
-
 	handler.router.HandleFunc(urlWithChannelIDKey, handler.serveRemove).Methods(http.MethodDelete)
 	handler.router.HandleFunc(urlWithChannelIDKey, handler.serveNotAllowed)
 
 	handler.router.HandleFunc(URLBaseV1Channels, handler.serveListAll).Methods(http.MethodGet)
+
+	handler.router.HandleFunc(URLBaseV1Channels, handler.serveJoin).Methods(http.MethodPost).HeadersRegexp(
+		"Content-Type", "multipart/form-data*")
+	handler.router.HandleFunc(URLBaseV1Channels, handler.serveBadContentType).Methods(http.MethodPost)
+
 	handler.router.HandleFunc(URLBaseV1Channels, handler.serveNotAllowed)
 
 	handler.router.HandleFunc(URLBaseV1, handler.redirectBaseV1).Methods(http.MethodGet)
@@ -156,11 +156,6 @@ func (h *HTTPHandler) serveJoin(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	channelID, err := h.extractChannelID(req, resp)
-	if err != nil {
-		return
-	}
-
 	_, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
 	if err != nil {
 		h.sendResponseJsonError(resp, http.StatusBadRequest, errors.Wrap(err, "cannot parse Mime media type"))
@@ -172,7 +167,7 @@ func (h *HTTPHandler) serveJoin(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	isAppChannel, err := ValidateJoinBlock(channelID, block)
+	channelID, isAppChannel, err := ValidateJoinBlock(block)
 	if err != nil {
 		h.sendResponseJsonError(resp, http.StatusBadRequest, errors.Wrap(err, "invalid join block"))
 		return
@@ -192,8 +187,11 @@ func (h *HTTPHandler) serveJoin(resp http.ResponseWriter, req *http.Request) {
 // Expect a multipart/form-data with a single part, of type file, with key FormDataConfigBlockKey.
 func (h *HTTPHandler) multipartFormDataBodyToBlock(params map[string]string, req *http.Request, resp http.ResponseWriter) *cb.Block {
 	boundary := params["boundary"]
-	reader := multipart.NewReader(req.Body, boundary)
-	form, err := reader.ReadForm(100 * 1024 * 1024)
+	reader := multipart.NewReader(
+		http.MaxBytesReader(resp, req.Body, int64(h.config.MaxRequestBodySize)),
+		boundary,
+	)
+	form, err := reader.ReadForm(2 * int64(h.config.MaxRequestBodySize))
 	if err != nil {
 		h.sendResponseJsonError(resp, http.StatusBadRequest, errors.Wrap(err, "cannot read form from request body"))
 		return nil
@@ -343,11 +341,11 @@ func (h *HTTPHandler) serveNotAllowed(resp http.ResponseWriter, req *http.Reques
 	err := errors.Errorf("invalid request method: %s", req.Method)
 
 	if _, ok := mux.Vars(req)[channelIDKey]; ok {
-		h.sendResponseNotAllowed(resp, err, http.MethodGet, http.MethodPost, http.MethodDelete)
+		h.sendResponseNotAllowed(resp, err, http.MethodGet, http.MethodDelete)
 		return
 	}
 
-	h.sendResponseNotAllowed(resp, err, http.MethodGet)
+	h.sendResponseNotAllowed(resp, err, http.MethodGet, http.MethodPost)
 }
 
 func negotiateContentType(req *http.Request) (string, error) {

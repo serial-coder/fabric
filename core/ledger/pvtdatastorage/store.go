@@ -159,6 +159,11 @@ func (p *Provider) Close() {
 	p.dbProvider.Close()
 }
 
+// Drop drops channel-specific data from the pvtdata store
+func (p *Provider) Drop(ledgerid string) error {
+	return p.dbProvider.Drop(ledgerid)
+}
+
 //////// store functions  ////////////////
 //////////////////////////////////////////
 
@@ -776,7 +781,9 @@ func (s *Store) purgeExpiredData(minBlkNum, maxBlkNum uint64) error {
 		for _, missingDataKey := range missingDataKeys {
 			batch.Delete(encodeMissingDataKey(missingDataKey))
 		}
-		s.db.WriteBatch(batch, false)
+		if err := s.db.WriteBatch(batch, false); err != nil {
+			return err
+		}
 	}
 	logger.Infof("[%s] - [%d] Entries purged from private data storage till block number [%d]", s.ledgerid, len(expiryEntries), maxBlkNum)
 	return nil
@@ -870,7 +877,7 @@ func (s *Store) processCollElgEvents() error {
 					collEntriesConverted++
 					if batch.Len() > s.maxBatchSize {
 						s.db.WriteBatch(batch, true)
-						batch = s.db.NewUpdateBatch()
+						batch.Reset()
 						sleepTime := time.Duration(s.batchesInterval)
 						logger.Infof("Going to sleep for %d milliseconds between batches. Entries for [ns=%s, coll=%s] converted so far = %d",
 							sleepTime, ns, coll, collEntriesConverted)
