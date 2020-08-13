@@ -376,10 +376,9 @@ func testLongDBNameOnCouchDB(t *testing.T, env TestEnv) {
 func testItr(t *testing.T, itr statedb.ResultsIterator, expectedKeys []string) {
 	defer itr.Close()
 	for _, expectedKey := range expectedKeys {
-		queryResult, _ := itr.Next()
-		vkv := queryResult.(*statedb.VersionedKV)
-		key := vkv.Key
-		require.Equal(t, expectedKey, key)
+		queryResult, err := itr.Next()
+		require.NoError(t, err)
+		require.Equal(t, expectedKey, queryResult.Key)
 	}
 	last, err := itr.Next()
 	require.NoError(t, err)
@@ -389,11 +388,10 @@ func testItr(t *testing.T, itr statedb.ResultsIterator, expectedKeys []string) {
 func testQueryItr(t *testing.T, itr statedb.ResultsIterator, expectedKeys []string, expectedValStrs ...[]string) {
 	defer itr.Close()
 	for i, expectedKey := range expectedKeys {
-		queryResult, _ := itr.Next()
-		vkv := queryResult.(*statedb.VersionedKV)
-		key := vkv.Key
-		valStr := string(vkv.Value)
-		require.Equal(t, expectedKey, key)
+		queryResult, err := itr.Next()
+		require.NoError(t, err)
+		valStr := string(queryResult.Value)
+		require.Equal(t, expectedKey, queryResult.Key)
 		for _, expectedValStr := range expectedValStrs[i] {
 			require.Contains(t, valStr, expectedValStr)
 		}
@@ -643,12 +641,7 @@ func testDrop(t *testing.T, env TestEnv) {
 	require.Nil(t, vv)
 }
 
-//go:generate counterfeiter -o mock/channelinfo_provider.go -fake-name ChannelInfoProvider . channelInfoProviderWrapper
-
-// define this interface to break circular dependency
-type channelInfoProviderWrapper interface {
-	channelInfoProvider
-}
+//go:generate counterfeiter -o mock/channelinfo_provider.go -fake-name ChannelInfoProvider . channelInfoProvider
 
 func TestPossibleNamespaces(t *testing.T) {
 	namespacesAndCollections := map[string][]string{

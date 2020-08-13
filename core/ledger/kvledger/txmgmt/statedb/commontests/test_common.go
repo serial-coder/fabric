@@ -42,7 +42,7 @@ func TestGetStateMultipleKeys(t *testing.T, dbProvider statedb.VersionedDBProvid
 	batch.Put("ns2", "key3", vv3.Value, vv3.Version)
 	batch.Put("ns2", "key4", vv4.Value, vv4.Version)
 	savePoint := version.NewHeight(2, 5)
-	db.ApplyUpdates(batch, savePoint)
+	require.NoError(t, db.ApplyUpdates(batch, savePoint))
 
 	actualValues, _ := db.GetStateMultipleKeys("ns1", []string{"key1", "key2"})
 	require.Equal(t, expectedValues, actualValues)
@@ -76,7 +76,7 @@ func TestBasicRW(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	batch.Put("ns2", "key4", vv4.Value, vv4.Version)
 	batch.Put("ns2", "key5", vv5.Value, vv5.Version)
 	savePoint := version.NewHeight(2, 5)
-	db.ApplyUpdates(batch, savePoint)
+	require.NoError(t, db.ApplyUpdates(batch, savePoint))
 
 	vv, _ := db.GetState("ns1", "key1")
 	require.Equal(t, &vv1, vv)
@@ -113,11 +113,13 @@ func TestDrop(t *testing.T, dbProvider statedb.VersionedDBProvider, checkDBsAfte
 		batch.Put(ns, "key1", vv1.Value, vv1.Version)
 		batch.Put(ns, "key2", vv2.Value, vv2.Version)
 		savePoint := version.NewHeight(2, 2)
-		db.ApplyUpdates(batch, savePoint)
+		require.NoError(t, db.ApplyUpdates(batch, savePoint))
 
 		vv, err := db.GetState(ns, "key1")
+		require.NoError(t, err)
 		require.Equal(t, &vv1, vv)
 		vv, err = db.GetState(ns, "key2")
+		require.NoError(t, err)
 		require.Equal(t, &vv2, vv)
 	}
 
@@ -129,9 +131,13 @@ func TestDrop(t *testing.T, dbProvider statedb.VersionedDBProvider, checkDBsAfte
 	// verify channel2 data remain as is
 	db2, err := dbProvider.GetDBHandle(channel2, nil)
 	require.NoError(t, err)
+
 	vv, err := db2.GetState("ns2", "key1")
+	require.NoError(t, err)
 	require.Equal(t, &vv1, vv)
+
 	vv, err = db2.GetState("ns2", "key2")
+	require.NoError(t, err)
 	require.Equal(t, &vv2, vv)
 
 	// drop again should not fail
@@ -152,7 +158,7 @@ func TestMultiDBBasicRW(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	batch1.Put("ns1", "key1", vv1.Value, vv1.Version)
 	batch1.Put("ns1", "key2", vv2.Value, vv2.Version)
 	savePoint1 := version.NewHeight(1, 2)
-	db1.ApplyUpdates(batch1, savePoint1)
+	require.NoError(t, db1.ApplyUpdates(batch1, savePoint1))
 
 	batch2 := statedb.NewUpdateBatch()
 	vv3 := statedb.VersionedValue{Value: []byte("value1_db2"), Version: version.NewHeight(1, 4)}
@@ -160,7 +166,7 @@ func TestMultiDBBasicRW(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	batch2.Put("ns1", "key1", vv3.Value, vv3.Version)
 	batch2.Put("ns1", "key2", vv4.Value, vv4.Version)
 	savePoint2 := version.NewHeight(1, 5)
-	db2.ApplyUpdates(batch2, savePoint2)
+	require.NoError(t, db2.ApplyUpdates(batch2, savePoint2))
 
 	vv, _ := db1.GetState("ns1", "key1")
 	require.Equal(t, &vv1, vv)
@@ -216,7 +222,7 @@ func TestDeletes(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 func TestIterator(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	db, err := dbProvider.GetDBHandle("testiterator", nil)
 	require.NoError(t, err)
-	db.Open()
+	require.NoError(t, db.Open())
 	defer db.Close()
 	batch := statedb.NewUpdateBatch()
 	batch.Put("ns1", "key1", []byte("value1"), version.NewHeight(1, 1))
@@ -227,7 +233,7 @@ func TestIterator(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	batch.Put("ns2", "key6", []byte("value6"), version.NewHeight(1, 6))
 	batch.Put("ns3", "key7", []byte("value7"), version.NewHeight(1, 7))
 	savePoint := version.NewHeight(2, 5)
-	db.ApplyUpdates(batch, savePoint)
+	require.NoError(t, db.ApplyUpdates(batch, savePoint))
 	itr1, _ := db.GetStateRangeScanIterator("ns1", "key1", "")
 	testItr(t, itr1, []string{"key1", "key2", "key3", "key4"})
 
@@ -245,10 +251,9 @@ func TestIterator(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 func testItr(t *testing.T, itr statedb.ResultsIterator, expectedKeys []string) {
 	defer itr.Close()
 	for _, expectedKey := range expectedKeys {
-		queryResult, _ := itr.Next()
-		vkv := queryResult.(*statedb.VersionedKV)
-		key := vkv.Key
-		require.Equal(t, expectedKey, key)
+		queryResult, err := itr.Next()
+		require.NoError(t, err)
+		require.Equal(t, expectedKey, queryResult.Key)
 	}
 	_, err := itr.Next()
 	require.NoError(t, err)
@@ -258,7 +263,7 @@ func testItr(t *testing.T, itr statedb.ResultsIterator, expectedKeys []string) {
 func TestQuery(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	db, err := dbProvider.GetDBHandle("testquery", nil)
 	require.NoError(t, err)
-	db.Open()
+	require.NoError(t, db.Open())
 	defer db.Close()
 	batch := statedb.NewUpdateBatch()
 	jsonValue1 := `{"asset_name": "marble1","color": "blue","size": 1,"owner": "tom"}`
@@ -297,7 +302,7 @@ func TestQuery(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	batch.Put("ns2", "key10", []byte(jsonValue10), version.NewHeight(1, 21))
 
 	savePoint := version.NewHeight(2, 22)
-	db.ApplyUpdates(batch, savePoint)
+	require.NoError(t, db.ApplyUpdates(batch, savePoint))
 
 	// query for owner=jerry, use namespace "ns1"
 	itr, err := db.ExecuteQuery("ns1", `{"selector":{"owner":"jerry"}}`)
@@ -307,8 +312,8 @@ func TestQuery(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	queryResult1, err := itr.Next()
 	require.NoError(t, err)
 	require.NotNil(t, queryResult1)
-	versionedQueryRecord := queryResult1.(*statedb.VersionedKV)
-	stringRecord := string(versionedQueryRecord.Value)
+
+	stringRecord := string(queryResult1.Value)
 	bFoundRecord := strings.Contains(stringRecord, "jerry")
 	require.True(t, bFoundRecord)
 
@@ -325,8 +330,7 @@ func TestQuery(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	queryResult1, err = itr.Next()
 	require.NoError(t, err)
 	require.NotNil(t, queryResult1)
-	versionedQueryRecord = queryResult1.(*statedb.VersionedKV)
-	stringRecord = string(versionedQueryRecord.Value)
+	stringRecord = string(queryResult1.Value)
 	bFoundRecord = strings.Contains(stringRecord, "jerry")
 	require.True(t, bFoundRecord)
 
@@ -365,8 +369,7 @@ func TestQuery(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	queryResult1, err = itr.Next()
 	require.NoError(t, err)
 	require.NotNil(t, queryResult1)
-	versionedQueryRecord = queryResult1.(*statedb.VersionedKV)
-	stringRecord = string(versionedQueryRecord.Value)
+	stringRecord = string(queryResult1.Value)
 	bFoundRecord = strings.Contains(stringRecord, "jerry")
 	require.True(t, bFoundRecord)
 
@@ -383,8 +386,7 @@ func TestQuery(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	queryResult1, err = itr.Next()
 	require.NoError(t, err)
 	require.NotNil(t, queryResult1)
-	versionedQueryRecord = queryResult1.(*statedb.VersionedKV)
-	stringRecord = string(versionedQueryRecord.Value)
+	stringRecord = string(queryResult1.Value)
 	bFoundRecord = strings.Contains(stringRecord, "jerry")
 	require.True(t, bFoundRecord)
 
@@ -410,8 +412,7 @@ func TestQuery(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	queryResult1, err = itr.Next()
 	require.NoError(t, err)
 	require.NotNil(t, queryResult1)
-	versionedQueryRecord = queryResult1.(*statedb.VersionedKV)
-	stringRecord = string(versionedQueryRecord.Value)
+	stringRecord = string(queryResult1.Value)
 	bFoundRecord = strings.Contains(stringRecord, "fred")
 	require.True(t, bFoundRecord)
 
@@ -428,8 +429,7 @@ func TestQuery(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	queryResult1, err = itr.Next()
 	require.NoError(t, err)
 	require.NotNil(t, queryResult1)
-	versionedQueryRecord = queryResult1.(*statedb.VersionedKV)
-	stringRecord = string(versionedQueryRecord.Value)
+	stringRecord = string(queryResult1.Value)
 	bFoundRecord = strings.Contains(stringRecord, "fred")
 	require.True(t, bFoundRecord)
 
@@ -455,8 +455,7 @@ func TestQuery(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	queryResult1, err = itr.Next()
 	require.NoError(t, err)
 	require.NotNil(t, queryResult1)
-	versionedQueryRecord = queryResult1.(*statedb.VersionedKV)
-	stringRecord = string(versionedQueryRecord.Value)
+	stringRecord = string(queryResult1.Value)
 	bFoundRecord = strings.Contains(stringRecord, "green")
 	require.True(t, bFoundRecord)
 
@@ -464,8 +463,7 @@ func TestQuery(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	queryResult2, err = itr.Next()
 	require.NoError(t, err)
 	require.NotNil(t, queryResult2)
-	versionedQueryRecord = queryResult2.(*statedb.VersionedKV)
-	stringRecord = string(versionedQueryRecord.Value)
+	stringRecord = string(queryResult2.Value)
 	bFoundRecord = strings.Contains(stringRecord, "green")
 	require.True(t, bFoundRecord)
 
@@ -482,8 +480,7 @@ func TestQuery(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	queryResult1, err = itr.Next()
 	require.NoError(t, err)
 	require.NotNil(t, queryResult1)
-	versionedQueryRecord = queryResult1.(*statedb.VersionedKV)
-	stringRecord = string(versionedQueryRecord.Value)
+	stringRecord = string(queryResult1.Value)
 	bFoundRecord = strings.Contains(stringRecord, "green")
 	require.True(t, bFoundRecord)
 
@@ -491,8 +488,7 @@ func TestQuery(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	queryResult2, err = itr.Next()
 	require.NoError(t, err)
 	require.NotNil(t, queryResult2)
-	versionedQueryRecord = queryResult2.(*statedb.VersionedKV)
-	stringRecord = string(versionedQueryRecord.Value)
+	stringRecord = string(queryResult2.Value)
 	bFoundRecord = strings.Contains(stringRecord, "green")
 	require.True(t, bFoundRecord)
 
@@ -519,8 +515,7 @@ func TestQuery(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	queryResult1, err = itr.Next()
 	require.NoError(t, err)
 	require.NotNil(t, queryResult1)
-	versionedQueryRecord = queryResult1.(*statedb.VersionedKV)
-	stringRecord = string(versionedQueryRecord.Value)
+	stringRecord = string(queryResult1.Value)
 	bFoundRecord = strings.Contains(stringRecord, "joe")
 	require.True(t, bFoundRecord)
 	bFoundRecord = strings.Contains(stringRecord, "1000007")
@@ -581,7 +576,7 @@ func TestGetVersion(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 		compositeKey := statedb.CompositeKey{Namespace: "ns", Key: "key3"}
 		loadKeys = append(loadKeys, &compositeKey)
 		//load the committed versions
-		bulkdb.LoadCommittedVersions(loadKeys)
+		require.NoError(t, bulkdb.LoadCommittedVersions(loadKeys))
 
 		//retrieve a version by namespace and key
 		resp, err := db.GetVersion("ns", "key3")
@@ -595,7 +590,7 @@ func TestGetVersion(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 func TestSmallBatchSize(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	db, err := dbProvider.GetDBHandle("testsmallbatchsize", nil)
 	require.NoError(t, err)
-	db.Open()
+	require.NoError(t, db.Open())
 	defer db.Close()
 	batch := statedb.NewUpdateBatch()
 	jsonValue1 := []byte(`{"asset_name": "marble1","color": "blue","size": 1,"owner": "tom"}`)
@@ -622,7 +617,7 @@ func TestSmallBatchSize(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	batch.Put("ns1", "key11", jsonValue11, version.NewHeight(1, 11))
 
 	savePoint := version.NewHeight(1, 12)
-	db.ApplyUpdates(batch, savePoint)
+	require.NoError(t, db.ApplyUpdates(batch, savePoint))
 
 	//Verify all marbles were added
 
@@ -784,7 +779,7 @@ func TestValueAndMetadataWrites(t *testing.T, dbProvider statedb.VersionedDBProv
 	batch.PutValAndMetadata("ns1", "key2", vv2.Value, vv2.Metadata, vv2.Version)
 	batch.PutValAndMetadata("ns2", "key3", vv3.Value, vv3.Metadata, vv3.Version)
 	batch.PutValAndMetadata("ns2", "key4", vv4.Value, vv4.Metadata, vv4.Version)
-	db.ApplyUpdates(batch, version.NewHeight(2, 5))
+	require.NoError(t, db.ApplyUpdates(batch, version.NewHeight(2, 5)))
 
 	vv, _ := db.GetState("ns1", "key1")
 	require.Equal(t, &vv1, vv)
@@ -803,7 +798,7 @@ func TestValueAndMetadataWrites(t *testing.T, dbProvider statedb.VersionedDBProv
 func TestPaginatedRangeQuery(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	db, err := dbProvider.GetDBHandle("testpaginatedrangequery", nil)
 	require.NoError(t, err)
-	db.Open()
+	require.NoError(t, db.Open())
 	defer db.Close()
 	batch := statedb.NewUpdateBatch()
 	jsonValue1 := `{"asset_name": "marble1","color": "blue","size": 1,"owner": "tom"}`
@@ -891,7 +886,7 @@ func TestPaginatedRangeQuery(t *testing.T, dbProvider statedb.VersionedDBProvide
 	batch.Put("ns1", "key40", []byte(jsonValue40), version.NewHeight(1, 4))
 
 	savePoint := version.NewHeight(2, 22)
-	db.ApplyUpdates(batch, savePoint)
+	require.NoError(t, db.ApplyUpdates(batch, savePoint))
 
 	//Test range query with no pagination
 	returnKeys := []string{}
@@ -930,7 +925,7 @@ func TestPaginatedRangeQuery(t *testing.T, dbProvider statedb.VersionedDBProvide
 func TestRangeQuerySpecialCharacters(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	db, err := dbProvider.GetDBHandle("testrangequeryspecialcharacters", nil)
 	require.NoError(t, err)
-	db.Open()
+	require.NoError(t, db.Open())
 	defer db.Close()
 
 	batch := statedb.NewUpdateBatch()
@@ -958,7 +953,7 @@ func TestRangeQuerySpecialCharacters(t *testing.T, dbProvider statedb.VersionedD
 	batch.Put("ns1", "key1z", []byte(jsonValue11), version.NewHeight(1, 11))
 
 	savePoint := version.NewHeight(2, 22)
-	db.ApplyUpdates(batch, savePoint)
+	require.NoError(t, db.ApplyUpdates(batch, savePoint))
 
 	//Test range query for the keys with special or non-English characters
 	returnKeys := []string{"key1", "key1%=", "key1&%-", "key1-a", "key10", "key1español", "key1z", "key1中文", "key1한국어"}
@@ -1002,15 +997,15 @@ func TestItrWithoutClose(t *testing.T, itr statedb.ResultsIterator, expectedKeys
 	for _, expectedKey := range expectedKeys {
 		queryResult, err := itr.Next()
 		require.NoError(t, err, "An unexpected error was thrown during iterator Next()")
-		vkv := queryResult.(*statedb.VersionedKV)
-		key := vkv.Key
-		require.Equal(t, expectedKey, key)
+		require.Equal(t, expectedKey, queryResult.Key)
 	}
 	queryResult, err := itr.Next()
 	require.NoError(t, err, "An unexpected error was thrown during iterator Next()")
 	require.Nil(t, queryResult)
 }
 
+// TestApplyUpdatesWithNilHeight is a common test that is invoked by leveldb and couchdb for verifying that
+// the statedb commits the batch with a nil height (used for committing the missing private data for the old blocks)
 func TestApplyUpdatesWithNilHeight(t *testing.T, dbProvider statedb.VersionedDBProvider) {
 	db, err := dbProvider.GetDBHandle("test-apply-updates-with-nil-height", nil)
 	require.NoError(t, err)
@@ -1030,30 +1025,40 @@ func TestApplyUpdatesWithNilHeight(t *testing.T, dbProvider statedb.VersionedDBP
 	// (because batch2 calls ApplyUpdates with savepoint as nil)
 }
 
+// TestDataExportImport is a common test that is invoked by leveldb and couchdb for testing the export and import of
+// statedb for snapshotting functionality
 func TestDataExportImport(
 	t *testing.T,
 	dbProvider statedb.VersionedDBProvider,
 	valueFormat byte) {
 
-	sourceDB, err := dbProvider.GetDBHandle("sourceLedger", nil)
+	sourceDB, err := dbProvider.GetDBHandle("source_ledger", nil)
 	require.NoError(t, err)
 
 	// generateSampleData returns a slice of KVs. The returned value contains five KVs for each of the namespaces
 	generateSampleData := func(namespaces ...string) []*statedb.VersionedKV {
 		sampleData := []*statedb.VersionedKV{}
 		for _, ns := range namespaces {
-			for i := 0; i < 5; i++ {
+			for i := 0; i < 6; i++ {
 				sampleKV := &statedb.VersionedKV{
 					CompositeKey: statedb.CompositeKey{
 						Namespace: ns,
 						Key:       fmt.Sprintf("key-%d", i),
 					},
 					VersionedValue: statedb.VersionedValue{
-						Value:    []byte(fmt.Sprintf("value-for-key-%d-for-%s", i, ns)),
 						Version:  version.NewHeight(1, 1),
 						Metadata: []byte(fmt.Sprintf("metadata-for-key-%d-for-%s", i, ns)),
 					},
 				}
+				switch {
+				case i < 3:
+					binaryVal := fmt.Sprintf("value-for-key-%d-for-%s", i, ns)
+					sampleKV.VersionedValue.Value = []byte(binaryVal)
+				default:
+					jsonVal := fmt.Sprintf(`{"color":"blue,"marble":"m%d", "namespace":"%s"}`, i, ns)
+					sampleKV.VersionedValue.Value = []byte(jsonVal)
+				}
+
 				sampleData = append(sampleData, sampleKV)
 			}
 		}
@@ -1080,36 +1085,40 @@ func TestDataExportImport(
 		require.NoError(t, err)
 		require.Equal(t, valueFormat, valFormat)
 
-		err = dbProvider.BootstrapDBFromState(destDBName, version.NewHeight(10, 10), fullScanItr, valFormat)
+		err = dbProvider.ImportFromSnapshot(destDBName, version.NewHeight(10, 10), fullScanItr, valFormat)
 		require.NoError(t, err)
 
 		destinationDB, err := dbProvider.GetDBHandle(destDBName, nil)
 		require.NoError(t, err)
 
-		for _, nsNotToBePresent := range skipNamespaces {
-			iter, err := destinationDB.GetStateRangeScanIterator(nsNotToBePresent, "", "")
-			require.NoError(t, err)
-			res, err := iter.Next()
-			require.NoError(t, err)
-			require.Nil(t, res)
-		}
+		fullScanItr, valFormat, err = destinationDB.GetFullScanIterator(
+			func(ns string) bool {
+				return false
+			},
+		)
+		require.NoError(t, err)
+		require.Equal(t, valueFormat, valFormat)
 
 		expectedNamespacesInDestinationDB := allNamesapces.minus(skipNamespaces)
-		results := []*statedb.VersionedKV{}
-		for _, nsToBePresent := range expectedNamespacesInDestinationDB {
-			iter, err := destinationDB.GetStateRangeScanIterator(nsToBePresent, "", "")
+		actualResults := []*statedb.VersionedKV{}
+		for {
+			ck, _, err := fullScanItr.Next()
 			require.NoError(t, err)
-			for {
-				res, err := iter.Next()
-				require.NoError(t, err)
-				if res == nil {
-					break
-				}
-				versionedKV := res.(*statedb.VersionedKV)
-				results = append(results, versionedKV)
+			if ck == nil {
+				break
 			}
+			vv, err := destinationDB.GetState(ck.Namespace, ck.Key)
+			require.NoError(t, err)
+			actualResults = append(
+				actualResults,
+				&statedb.VersionedKV{
+					CompositeKey:   *ck,
+					VersionedValue: *vv,
+				},
+			)
 		}
-		require.Equal(t, generateSampleData(expectedNamespacesInDestinationDB...), results)
+
+		require.Equal(t, generateSampleData(expectedNamespacesInDestinationDB...), actualResults)
 		retrievedSavepoint, err := destinationDB.GetLatestSavePoint()
 		require.NoError(t, err)
 		require.Equal(t, version.NewHeight(10, 10), retrievedSavepoint)
@@ -1129,7 +1138,7 @@ func TestDataExportImport(
 	}
 
 	for i, testCase := range testCases {
-		name := fmt.Sprintf("testCase %d", i)
+		name := fmt.Sprintf("test_case_%d", i)
 		t.Run(
 			name,
 			func(t *testing.T) {
@@ -1153,9 +1162,9 @@ func CreateTestData(t *testing.T, db statedb.VersionedDB, ns string, numKeys int
 	itr, _ := db.GetStateRangeScanIterator(ns, "", "")
 	defer itr.Close()
 	for _, expectedKey := range expectedKeys {
-		queryResult, _ := itr.Next()
-		vkv := queryResult.(*statedb.VersionedKV)
-		require.Equal(t, expectedKey, vkv.Key)
+		queryResult, err := itr.Next()
+		require.NoError(t, err)
+		require.Equal(t, expectedKey, queryResult.Key)
 	}
 	return expectedKeys
 }

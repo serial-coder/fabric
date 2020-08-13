@@ -255,7 +255,9 @@ func (s *DB) ApplyPrivacyAwareUpdates(updates *UpdateBatch, height *version.Heig
 	combinedUpdates := updates.PubUpdates
 	addPvtUpdates(combinedUpdates, updates.PvtUpdates)
 	addHashedUpdates(combinedUpdates, updates.HashUpdates, !s.BytesKeySupported())
-	s.metadataHint.setMetadataUsedFlag(updates)
+	if err := s.metadataHint.setMetadataUsedFlag(updates); err != nil {
+		return err
+	}
 	return s.VersionedDB.ApplyUpdates(combinedUpdates.UpdateBatch, height)
 }
 
@@ -309,13 +311,7 @@ func (s *DB) HandleChaincodeDeploy(chaincodeDefinition *cceventmgmt.ChaincodeDef
 		return nil
 	}
 
-	collectionConfigMap, err := extractCollectionNames(chaincodeDefinition)
-	if err != nil {
-		logger.Errorf("Error while retrieving collection config for chaincode=[%s]: %s",
-			chaincodeDefinition.Name, err)
-		return nil
-	}
-
+	collectionConfigMap := extractCollectionNames(chaincodeDefinition)
 	for directoryPath, indexFiles := range dbArtifacts {
 		indexFilesData := make(map[string][]byte)
 		for _, f := range indexFiles {
@@ -389,7 +385,7 @@ func addHashedUpdates(pubUpdateBatch *PubUpdateBatch, hashedUpdateBatch *HashedU
 	}
 }
 
-func extractCollectionNames(chaincodeDefinition *cceventmgmt.ChaincodeDefinition) (map[string]bool, error) {
+func extractCollectionNames(chaincodeDefinition *cceventmgmt.ChaincodeDefinition) map[string]bool {
 	collectionConfigs := chaincodeDefinition.CollectionConfigs
 	collectionConfigsMap := make(map[string]bool)
 	if collectionConfigs != nil {
@@ -401,7 +397,7 @@ func extractCollectionNames(chaincodeDefinition *cceventmgmt.ChaincodeDefinition
 			collectionConfigsMap[sConfig.Name] = true
 		}
 	}
-	return collectionConfigsMap, nil
+	return collectionConfigsMap
 }
 
 type indexInfo struct {

@@ -21,6 +21,7 @@ import (
 	"github.com/hyperledger/fabric/common/ledger/testutil"
 	util2 "github.com/hyperledger/fabric/common/util"
 	"github.com/hyperledger/fabric/core/ledger"
+	"github.com/hyperledger/fabric/core/ledger/internal/version"
 	"github.com/hyperledger/fabric/internal/pkg/txflags"
 	"github.com/stretchr/testify/require"
 )
@@ -56,7 +57,7 @@ func TestSavepoint(t *testing.T) {
 	// create the next block (block 1)
 	txid := util2.GenerateUUID()
 	simulator, _ := env.txmgr.NewTxSimulator(txid)
-	simulator.SetState("ns1", "key1", []byte("value1"))
+	require.NoError(t, simulator.SetState("ns1", "key1", []byte("value1")))
 	simulator.Done()
 	simRes, _ := simulator.GetTxSimulationResults()
 	pubSimResBytes, _ := simRes.GetPubSimulationBytes()
@@ -75,14 +76,14 @@ func TestSavepoint(t *testing.T) {
 	// create the next block (block 2)
 	txid = util2.GenerateUUID()
 	simulator, _ = env.txmgr.NewTxSimulator(txid)
-	simulator.SetState("ns1", "key1", []byte("value2"))
+	require.NoError(t, simulator.SetState("ns1", "key1", []byte("value2")))
 	simulator.Done()
 	simRes, _ = simulator.GetTxSimulationResults()
 	pubSimResBytes, _ = simRes.GetPubSimulationBytes()
 	block2 := bg.NextBlock([][]byte{pubSimResBytes})
 
 	// assume that the peer failed to commit this block to historyDB and is being recovered now
-	env.testHistoryDB.CommitLostBlock(&ledger.BlockAndPvtData{Block: block2})
+	require.NoError(t, env.testHistoryDB.CommitLostBlock(&ledger.BlockAndPvtData{Block: block2}))
 	savepoint, err = env.testHistoryDB.GetLastSavepoint()
 	require.NoError(t, err, "Error upon historyDatabase.GetLastSavepoint()")
 	require.Equal(t, uint64(2), savepoint.BlockNum)
@@ -92,6 +93,33 @@ func TestSavepoint(t *testing.T) {
 	require.NoError(t, err, "Error upon historyDatabase.ShouldRecover()")
 	require.True(t, status)
 	require.Equal(t, uint64(3), blockNum)
+}
+
+func TestMarkStartingSavepoint(t *testing.T) {
+	t.Run("normal-case", func(t *testing.T) {
+		env := newTestHistoryEnv(t)
+		defer env.cleanup()
+
+		p := env.testHistoryDBProvider
+		require.NoError(t, p.MarkStartingSavepoint("testLedger", version.NewHeight(25, 30)))
+
+		db := p.GetDBHandle("testLedger")
+		height, err := db.GetLastSavepoint()
+		require.NoError(t, err)
+		require.Equal(t, version.NewHeight(25, 30), height)
+	})
+
+	t.Run("error-case", func(t *testing.T) {
+		env := newTestHistoryEnv(t)
+		defer env.cleanup()
+		p := env.testHistoryDBProvider
+		p.Close()
+		err := p.MarkStartingSavepoint("testLedger", version.NewHeight(25, 30))
+		require.Contains(t,
+			err.Error(),
+			"error while writing the starting save point for ledger [testLedger]",
+		)
+	})
 }
 
 func TestHistory(t *testing.T) {
@@ -112,7 +140,7 @@ func TestHistory(t *testing.T) {
 	txid := util2.GenerateUUID()
 	simulator, _ := env.txmgr.NewTxSimulator(txid)
 	value1 := []byte("value1")
-	simulator.SetState("ns1", "key7", value1)
+	require.NoError(t, simulator.SetState("ns1", "key7", value1))
 	simulator.Done()
 	simRes, _ := simulator.GetTxSimulationResults()
 	pubSimResBytes, _ := simRes.GetPubSimulationBytes()
@@ -127,7 +155,7 @@ func TestHistory(t *testing.T) {
 	txid = util2.GenerateUUID()
 	simulator, _ = env.txmgr.NewTxSimulator(txid)
 	value2 := []byte("value2")
-	simulator.SetState("ns1", "key7", value2)
+	require.NoError(t, simulator.SetState("ns1", "key7", value2))
 	simulator.Done()
 	simRes, _ = simulator.GetTxSimulationResults()
 	pubSimResBytes, _ = simRes.GetPubSimulationBytes()
@@ -136,7 +164,7 @@ func TestHistory(t *testing.T) {
 	txid2 := util2.GenerateUUID()
 	simulator2, _ := env.txmgr.NewTxSimulator(txid2)
 	value3 := []byte("value3")
-	simulator2.SetState("ns1", "key7", value3)
+	require.NoError(t, simulator2.SetState("ns1", "key7", value3))
 	simulator2.Done()
 	simRes2, _ := simulator2.GetTxSimulationResults()
 	pubSimResBytes2, _ := simRes2.GetPubSimulationBytes()
@@ -150,7 +178,7 @@ func TestHistory(t *testing.T) {
 	//block3
 	txid = util2.GenerateUUID()
 	simulator, _ = env.txmgr.NewTxSimulator(txid)
-	simulator.DeleteState("ns1", "key7")
+	require.NoError(t, simulator.DeleteState("ns1", "key7"))
 	simulator.Done()
 	simRes, _ = simulator.GetTxSimulationResults()
 	pubSimResBytes, _ = simRes.GetPubSimulationBytes()
@@ -223,7 +251,7 @@ func TestHistoryForInvalidTran(t *testing.T) {
 	txid := util2.GenerateUUID()
 	simulator, _ := env.txmgr.NewTxSimulator(txid)
 	value1 := []byte("value1")
-	simulator.SetState("ns1", "key7", value1)
+	require.NoError(t, simulator.SetState("ns1", "key7", value1))
 	simulator.Done()
 	simRes, _ := simulator.GetTxSimulationResults()
 	pubSimResBytes, _ := simRes.GetPubSimulationBytes()
@@ -279,7 +307,7 @@ func TestHistoryWithKeyContainingNilBytes(t *testing.T) {
 	//block1
 	txid := util2.GenerateUUID()
 	simulator, _ := env.txmgr.NewTxSimulator(txid)
-	simulator.SetState("ns1", "key", []byte("value1")) // add a key <key> that contains no nil byte
+	require.NoError(t, simulator.SetState("ns1", "key", []byte("value1"))) // add a key <key> that contains no nil byte
 	simulator.Done()
 	simRes, _ := simulator.GetTxSimulationResults()
 	pubSimResBytes, _ := simRes.GetPubSimulationBytes()
@@ -293,7 +321,7 @@ func TestHistoryWithKeyContainingNilBytes(t *testing.T) {
 	simulationResults := [][]byte{}
 	txid = util2.GenerateUUID()
 	simulator, _ = env.txmgr.NewTxSimulator(txid)
-	simulator.SetState("ns1", "key", []byte("value2")) // add another value for the key <key>
+	require.NoError(t, simulator.SetState("ns1", "key", []byte("value2"))) // add another value for the key <key>
 	simulator.Done()
 	simRes, _ = simulator.GetTxSimulationResults()
 	pubSimResBytes, _ = simRes.GetPubSimulationBytes()
@@ -305,28 +333,28 @@ func TestHistoryWithKeyContainingNilBytes(t *testing.T) {
 
 	// key1 should not fall in the range
 	key1 := "\x00key\x00\x01\x01\x15"
-	simulator2.SetState("ns1", key1, []byte("dummyVal1"))
+	require.NoError(t, simulator2.SetState("ns1", key1, []byte("dummyVal1")))
 
 	// add other keys that contain nil byte(s) - such that when a range query is formed, these keys fall in the range
 	// key2 is skipped due to tran num decoding error (decode size 21 > 8)
 	// blockNumTranNumBytes are 0x1, 0x1, 0x15, 0x0 (separator), 0x1, 0x2, 0x1, 0x1
 	key2 := "key\x00\x01\x01\x15" // \x15 is 21
-	simulator2.SetState("ns1", key2, []byte("dummyVal2"))
+	require.NoError(t, simulator2.SetState("ns1", key2, []byte("dummyVal2")))
 
 	// key3 is skipped due to block num decoding error (decoded size 12 > 8)
 	// blockNumTranNumBytes are 0xc, 0x0 (separtor), 0x1, 0x2, 0x1, 0x1
 	key3 := "key\x00\x0c" // \x0c is 12
-	simulator2.SetState("ns1", key3, []byte("dummyVal3"))
+	require.NoError(t, simulator2.SetState("ns1", key3, []byte("dummyVal3")))
 
 	// key4 is skipped because blockBytesConsumed (2) + tranBytesConsumed (2) != len(blockNumTranNum) (6)
 	// blockNumTranNumBytes are 0x1, 0x0 (separator), 0x1, 0x2, 0x1, 0x1
 	key4 := "key\x00\x01"
-	simulator2.SetState("ns1", key4, []byte("dummyVal4"))
+	require.NoError(t, simulator2.SetState("ns1", key4, []byte("dummyVal4")))
 
 	// key5 is skipped due to ErrNotFoundInIndex, where history key is <ns, key\x00\x04\x01, 2, 1>, same as <ns, key, 16777474, 1>.
 	// blockNumTranNumBytes are 0x4, 0x1, 0x0 (separator), 0x1, 0x2, 0x1, 0x1
 	key5 := "key\x00\x04\x01"
-	simulator2.SetState("ns1", key5, []byte("dummyVal5"))
+	require.NoError(t, simulator2.SetState("ns1", key5, []byte("dummyVal5")))
 
 	// commit block2
 	simulator2.Done()
@@ -379,7 +407,7 @@ func TestHistoryWithBlockNumber256(t *testing.T) {
 		txid := util2.GenerateUUID()
 		simulator, _ := env.txmgr.NewTxSimulator(txid)
 		value := fmt.Sprintf("value%d", i)
-		simulator.SetState("ns1", "key", []byte(value))
+		require.NoError(t, simulator.SetState("ns1", "key", []byte(value)))
 		simulator.Done()
 		simRes, _ := simulator.GetTxSimulationResults()
 		pubSimResBytes, _ := simRes.GetPubSimulationBytes()
