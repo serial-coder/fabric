@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/pem"
 	"fmt"
+	"github.com/hyperledger/fabric/common/channelconfig"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -415,26 +416,35 @@ func (c *Chain) Errored() <-chan struct{} {
 
 // Halt stops the chain.
 func (c *Chain) Halt() {
+	c.stop()
+}
+
+func (c *Chain) stop() bool {
 	select {
 	case <-c.startC:
 	default:
-		c.logger.Warnf("Attempted to halt a chain that has not started")
-		return
+		c.logger.Warn("Attempted to halt a chain that has not started")
+		return false
 	}
 
 	select {
 	case c.haltC <- struct{}{}:
 	case <-c.doneC:
-		return
+		return false
 	}
 	<-c.doneC
+
+	return true
 }
 
 // halt stops the chain and calls the haltCallback function, which allows the
-// chain to transfer responsbility to a follower or inactive chain when a chain
-// discovers it is no longer a member of a channel
+// chain to transfer responsibility to a follower or inactive chain when a chain
+// discovers it is no longer a member of a channel.
 func (c *Chain) halt() {
-	c.Halt()
+	if stopped := c.stop(); !stopped {
+		c.logger.Info("This node was stopped, the haltCallback will not be called")
+		return
+	}
 	if c.haltCallback != nil {
 		c.haltCallback()
 	}
@@ -891,6 +901,11 @@ func (c *Chain) catchUp(snap *raftpb.Snapshot) error {
 	if c.lastBlock.Header.Number >= b.Header.Number {
 		c.logger.Warnf("Snapshot is at block [%d], local block number is %d, no sync needed", b.Header.Number, c.lastBlock.Header.Number)
 		return nil
+	} else if b.Header.Number == c.lastBlock.Header.Number+1 {
+		c.logger.Infof("The only missing block [%d] is encapsulated in snapshot, committing it to shortcut catchup process", b.Header.Number)
+		c.commitBlock(b)
+		c.lastBlock = b
+		return nil
 	}
 
 	puller, err := c.createPuller()
@@ -908,33 +923,37 @@ func (c *Chain) catchUp(snap *raftpb.Snapshot) error {
 		if block == nil {
 			return errors.Errorf("failed to fetch block [%d] from cluster", next)
 		}
-		if protoutil.IsConfigBlock(block) {
-			c.support.WriteConfigBlock(block, nil)
-
-			configMembership := c.detectConfChange(block)
-
-			if configMembership != nil && configMembership.Changed() {
-				c.logger.Infof("Config block [%d] changes consenter set, communication should be reconfigured", block.Header.Number)
-
-				c.raftMetadataLock.Lock()
-				c.opts.BlockMetadata = configMembership.NewBlockMetadata
-				c.opts.Consenters = configMembership.NewConsenters
-				c.raftMetadataLock.Unlock()
-
-				if err := c.configureComm(); err != nil {
-					c.logger.Panicf("Failed to configure communication: %s", err)
-				}
-			}
-		} else {
-			c.support.WriteBlock(block, nil)
-		}
-
+		c.commitBlock(block)
 		c.lastBlock = block
 		next++
 	}
 
 	c.logger.Infof("Finished syncing with cluster up to and including block [%d]", b.Header.Number)
 	return nil
+}
+
+func (c *Chain) commitBlock(block *common.Block) {
+	if !protoutil.IsConfigBlock(block) {
+		c.support.WriteBlock(block, nil)
+		return
+	}
+
+	c.support.WriteConfigBlock(block, nil)
+
+	configMembership := c.detectConfChange(block)
+
+	if configMembership != nil && configMembership.Changed() {
+		c.logger.Infof("Config block [%d] changes consenter set, communication should be reconfigured", block.Header.Number)
+
+		c.raftMetadataLock.Lock()
+		c.opts.BlockMetadata = configMembership.NewBlockMetadata
+		c.opts.Consenters = configMembership.NewConsenters
+		c.raftMetadataLock.Unlock()
+
+		if err := c.configureComm(); err != nil {
+			c.logger.Panicf("Failed to configure communication: %s", err)
+		}
+	}
 }
 
 func (c *Chain) detectConfChange(block *common.Block) *MembershipChanges {
@@ -954,7 +973,7 @@ func (c *Chain) detectConfChange(block *common.Block) *MembershipChanges {
 		c.sizeLimit = configMetadata.Options.SnapshotIntervalSize
 	}
 
-	changes, err := ComputeMembershipChanges(c.opts.BlockMetadata, c.opts.Consenters, configMetadata.Consenters, c.support.SharedConfig())
+	changes, err := ComputeMembershipChanges(c.opts.BlockMetadata, c.opts.Consenters, configMetadata.Consenters)
 	if err != nil {
 		c.logger.Panicf("illegal configuration change detected: %s", err)
 	}
@@ -1279,34 +1298,51 @@ func (c *Chain) newConfigMetadata(block *common.Block) *etcdraft.ConfigMetadata 
 
 // ValidateConsensusMetadata determines the validity of a
 // ConsensusMetadata update during config updates on the channel.
-func (c *Chain) ValidateConsensusMetadata(oldMetadataBytes, newMetadataBytes []byte, newChannel bool) error {
-	// metadata was not updated
-	if newMetadataBytes == nil {
+func (c *Chain) ValidateConsensusMetadata(oldOrdererConfig, newOrdererConfig channelconfig.Orderer, newChannel bool) error {
+	if newOrdererConfig == nil {
+		c.logger.Panic("Programming Error: ValidateConsensusMetadata called with nil new channel config")
 		return nil
 	}
-	if oldMetadataBytes == nil {
+
+	// metadata was not updated
+	if newOrdererConfig.ConsensusMetadata() == nil {
+		return nil
+	}
+
+	if oldOrdererConfig == nil {
+		c.logger.Panic("Programming Error: ValidateConsensusMetadata called with nil old channel config")
+		return nil
+	}
+
+	if oldOrdererConfig.ConsensusMetadata() == nil {
 		c.logger.Panic("Programming Error: ValidateConsensusMetadata called with nil old metadata")
+		return nil
 	}
 
 	oldMetadata := &etcdraft.ConfigMetadata{}
-	if err := proto.Unmarshal(oldMetadataBytes, oldMetadata); err != nil {
+	if err := proto.Unmarshal(oldOrdererConfig.ConsensusMetadata(), oldMetadata); err != nil {
 		c.logger.Panicf("Programming Error: Failed to unmarshal old etcdraft consensus metadata: %v", err)
 	}
+
 	newMetadata := &etcdraft.ConfigMetadata{}
-	if err := proto.Unmarshal(newMetadataBytes, newMetadata); err != nil {
+	if err := proto.Unmarshal(newOrdererConfig.ConsensusMetadata(), newMetadata); err != nil {
 		return errors.Wrap(err, "failed to unmarshal new etcdraft metadata configuration")
 	}
 
-	err := CheckConfigMetadata(newMetadata)
+	verifyOpts, err := createX509VerifyOptions(newOrdererConfig)
 	if err != nil {
-		return errors.Wrap(err, "invalid new config metdadata")
+		return errors.Wrapf(err, "failed to create x509 verify options from old and new orderer config")
+	}
+
+	if err := VerifyConfigMetadata(newMetadata, verifyOpts); err != nil {
+		return errors.Wrap(err, "invalid new config metadata")
 	}
 
 	if newChannel {
 		// check if the consenters are a subset of the existing consenters (system channel consenters)
 		set := ConsentersToMap(oldMetadata.Consenters)
 		for _, c := range newMetadata.Consenters {
-			if _, exits := set[string(c.ClientTlsCert)]; !exits {
+			if !set.Exists(c) {
 				return errors.New("new channel has consenter that is not part of system consenter set")
 			}
 		}
@@ -1319,9 +1355,16 @@ func (c *Chain) ValidateConsensusMetadata(oldMetadataBytes, newMetadataBytes []b
 	c.raftMetadataLock.RUnlock()
 
 	dummyOldConsentersMap := CreateConsentersMap(dummyOldBlockMetadata, oldMetadata)
-	changes, err := ComputeMembershipChanges(dummyOldBlockMetadata, dummyOldConsentersMap, newMetadata.Consenters, c.support.SharedConfig())
+	changes, err := ComputeMembershipChanges(dummyOldBlockMetadata, dummyOldConsentersMap, newMetadata.Consenters)
 	if err != nil {
 		return err
+	}
+
+	//new config metadata was verified above. Additionally need to check new consenters for certificates expiration
+	for _, c := range changes.AddedNodes {
+		if err := validateConsenterTLSCerts(c, verifyOpts, false); err != nil {
+			return errors.Wrapf(err, "consenter %s:%d has invalid certificates", c.Host, c.Port)
+		}
 	}
 
 	active := c.ActiveNodes.Load().([]uint64)
@@ -1347,6 +1390,7 @@ func (c *Chain) suspectEviction() bool {
 
 func (c *Chain) newEvictionSuspector() *evictionSuspector {
 	consenterCertificate := &ConsenterCertificate{
+		Logger:               c.logger,
 		ConsenterCertificate: c.opts.Cert,
 		CryptoProvider:       c.CryptoProvider,
 	}

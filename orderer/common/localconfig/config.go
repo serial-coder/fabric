@@ -79,12 +79,13 @@ type Keepalive struct {
 
 // TLS contains configuration for TLS connections.
 type TLS struct {
-	Enabled            bool
-	PrivateKey         string
-	Certificate        string
-	RootCAs            []string
-	ClientAuthRequired bool
-	ClientRootCAs      []string
+	Enabled               bool
+	PrivateKey            string
+	Certificate           string
+	RootCAs               []string
+	ClientAuthRequired    bool
+	ClientRootCAs         []string
+	TLSHandshakeTimeShift time.Duration
 }
 
 // SASLPlain contains configuration for SASL/PLAIN authentication
@@ -201,7 +202,6 @@ type Statsd struct {
 // Channel participation uses the same ListenAddress and TLS settings of the Operations service.
 type ChannelParticipation struct {
 	Enabled            bool
-	RemoveStorage      bool // Whether to permanently remove storage on channel removal.
 	MaxRequestBodySize uint32
 }
 
@@ -281,7 +281,6 @@ var Defaults = TopLevel{
 	},
 	ChannelParticipation: ChannelParticipation{
 		Enabled:            false,
-		RemoveStorage:      false,
 		MaxRequestBodySize: 1024 * 1024,
 	},
 }

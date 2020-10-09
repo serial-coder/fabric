@@ -85,7 +85,7 @@ peer:
     keepalive:
       minInterval: 60s
   tls:
-    enabled:  true
+    enabled: {{ .TLSEnabled }}
     clientAuthRequired: {{ .ClientAuthRequired }}
     cert:
       file: {{ .PeerLocalTLSDir Peer }}/server.crt
@@ -110,6 +110,12 @@ peer:
       Security: 256
       FileKeyStore:
         KeyStore:
+    PKCS11:
+      Hash: SHA2
+      Security: 256
+      Library:
+      Label:
+      Pin:
   mspConfigPath: {{ .PeerLocalMSPDir Peer }}
   localMspId: {{ (.Organization Peer.Organization).MSPID }}
   deliveryclient:
@@ -215,7 +221,7 @@ ledger:
 operations:
   listenAddress: 127.0.0.1:{{ .PeerPort Peer "Operations" }}
   tls:
-    enabled: true
+    enabled: {{ .TLSEnabled }}
     cert:
       file: {{ .PeerLocalTLSDir Peer }}/server.crt
     key:

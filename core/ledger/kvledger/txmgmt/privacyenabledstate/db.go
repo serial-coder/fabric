@@ -73,7 +73,11 @@ func NewDBProvider(
 		}
 	}
 
-	dbProvider := &DBProvider{vdbProvider, healthCheckRegistry, bookkeeperProvider}
+	dbProvider := &DBProvider{
+		VersionedDBProvider: vdbProvider,
+		HealthCheckRegistry: healthCheckRegistry,
+		bookkeepingProvider: bookkeeperProvider,
+	}
 
 	err = dbProvider.RegisterHealthChecker()
 	if err != nil {
@@ -352,6 +356,14 @@ func derivePvtDataNs(namespace, collection string) string {
 
 func deriveHashedDataNs(namespace, collection string) string {
 	return namespace + nsJoiner + hashDataPrefix + collection
+}
+
+func decodeHashedDataNsColl(hashedDataNs string) (string, string, error) {
+	strs := strings.Split(hashedDataNs, nsJoiner+hashDataPrefix)
+	if len(strs) != 2 {
+		return "", "", errors.Errorf("not a valid hashedDataNs [%s]", hashedDataNs)
+	}
+	return strs[0], strs[1], nil
 }
 
 func isPvtdataNs(namespace string) bool {

@@ -129,7 +129,9 @@ func Main() {
 		} else {
 			logger.Infof("Not bootstrapping the system channel because the bootstrap block number is %d (>0), replication is needed", bootstrapBlock.Header.Number)
 		}
-	} else if conf.General.BootstrapMethod != "none" {
+	} else if conf.General.BootstrapMethod == "none" {
+		bootstrapBlock = initSystemChannelWithJoinBlock(conf, cryptoProvider, lf)
+	} else {
 		logger.Panicf("Unknown bootstrap method: %s", conf.General.BootstrapMethod)
 	}
 
@@ -181,12 +183,15 @@ func Main() {
 
 	// If the orderer has a system channel and is of cluster type, it may have to replicate first.
 	if clusterBootBlock != nil && isClusterType {
-		// Are we bootstrapping with a clusterBootBlock with number >0 ? If yes, perform replication.
+		// When we are bootstrapping with a clusterBootBlock with number >0, replication will be performed.
 		// Only clusters that are equipped with a recent config block (number i.e. >0) can replicate.
 		// This will replicate all channels if the clusterBootBlock number > system-channel height (i.e. there is a gap in the ledger).
 		repInitiator = onboarding.NewReplicationInitiator(lf, clusterBootBlock, conf, clusterClientConfig.SecOpts, signer, cryptoProvider)
-		if conf.General.BootstrapMethod == "file" {
-			repInitiator.ReplicateIfNeeded(clusterBootBlock)
+		repInitiator.ReplicateIfNeeded(clusterBootBlock)
+		// With BootstrapMethod == "none", the bootstrapBlock comes from a join-block. If it exists, we need to remove
+		// the system channel join-block from the filerepo.
+		if conf.General.BootstrapMethod == "none" && bootstrapBlock != nil {
+			discardSystemChannelJoinBlock(conf, bootstrapBlock)
 		}
 	}
 
@@ -201,6 +206,7 @@ func Main() {
 		serverConfig.SecOpts.Certificate,
 		[][]byte{clusterClientConfig.SecOpts.Certificate},
 		identityBytes,
+		expirationLogger.Infof,
 		expirationLogger.Warnf, // This can be used to piggyback a metric event in the future
 		time.Now(),
 		time.AfterFunc)
@@ -281,6 +287,80 @@ func Main() {
 	}
 }
 
+// Searches whether there is a join block for a system channel, and if there is, and it is a genesis block,
+// initializes the ledger with it. Returns the join-block if it finds one.
+func initSystemChannelWithJoinBlock(
+	config *localconfig.TopLevel,
+	cryptoProvider bccsp.BCCSP,
+	lf blockledger.Factory,
+) (bootstrapBlock *cb.Block) {
+	if !config.ChannelParticipation.Enabled {
+		return nil
+	}
+
+	joinBlockFileRepo, err := multichannel.InitJoinBlockFileRepo(config)
+	if err != nil {
+		logger.Panicf("Failed initializing join-block file repo: %v", err)
+	}
+
+	joinBlockFiles, err := joinBlockFileRepo.List()
+	if err != nil {
+		logger.Panicf("Failed listing join-block file repo: %v", err)
+	}
+
+	var systemChannelID string
+	for _, fileName := range joinBlockFiles {
+		channelName := joinBlockFileRepo.FileToBaseName(fileName)
+		blockBytes, err := joinBlockFileRepo.Read(channelName)
+		if err != nil {
+			logger.Panicf("Failed reading join-block for channel '%s', error: %v", channelName, err)
+		}
+		block, err := protoutil.UnmarshalBlock(blockBytes)
+		if err != nil {
+			logger.Panicf("Failed unmarshalling join-block for channel '%s', error: %v", channelName, err)
+		}
+		if err = onboarding.ValidateBootstrapBlock(block, cryptoProvider); err == nil {
+			bootstrapBlock = block
+			systemChannelID = channelName
+			break
+		}
+	}
+
+	if bootstrapBlock == nil {
+		logger.Info("No join-block was found for the system channel")
+		return bootstrapBlock
+	}
+
+	if bootstrapBlock.Header.Number == 0 {
+		initializeBootstrapChannel(bootstrapBlock, lf)
+	}
+
+	logger.Infof("Join-block was found for the system channel: %s, number: %d", systemChannelID, bootstrapBlock.Header.Number)
+	return bootstrapBlock
+}
+
+func discardSystemChannelJoinBlock(
+	config *localconfig.TopLevel,
+	bootstrapBlock *cb.Block,
+) {
+	if !config.ChannelParticipation.Enabled {
+		return
+	}
+
+	systemChannelName, err := protoutil.GetChannelIDFromBlock(bootstrapBlock)
+	if err != nil {
+		logger.Panicf("Failed to extract system channel name from join-block: %s", err)
+	}
+	joinBlockFileRepo, err := multichannel.InitJoinBlockFileRepo(config)
+	if err != nil {
+		logger.Panicf("Failed initializing join-block file repo: %v", err)
+	}
+	err = joinBlockFileRepo.Remove(systemChannelName)
+	if err != nil {
+		logger.Panicf("Failed to remove join-block for system channel: %s", err)
+	}
+}
+
 func reuseListener(conf *localconfig.TopLevel) bool {
 	clusterConf := conf.General.Cluster
 	// If listen address is not configured, and the TLS certificate isn't configured,
@@ -323,7 +403,7 @@ func extractSysChanLastConfig(lf blockledger.Factory, bootstrapBlock *cb.Block) 
 		logger.Panicf("Failed getting system channel ledger: %v", err)
 	}
 	height := systemChannelLedger.Height()
-	lastConfigBlock := multichannel.ConfigBlock(systemChannelLedger)
+	lastConfigBlock := multichannel.ConfigBlockOrPanic(systemChannelLedger)
 	logger.Infof("System channel: name=%s, height=%d, last config block number=%d",
 		systemChannelName, height, lastConfigBlock.Header.Number)
 	return lastConfigBlock
@@ -338,10 +418,11 @@ func extractSystemChannel(lf blockledger.Factory, bccsp bccsp.BCCSP) *cb.Block {
 		if err != nil {
 			logger.Panicf("Failed getting channel %v's ledger: %v", cID, err)
 		}
-		channelConfigBlock := multichannel.ConfigBlock(channelLedger)
+		channelConfigBlock := multichannel.ConfigBlockOrPanic(channelLedger)
 
 		err = onboarding.ValidateBootstrapBlock(channelConfigBlock, bccsp)
 		if err == nil {
+			logger.Infof("Found system channel config block, number: %d", channelConfigBlock.Header.Number)
 			return channelConfigBlock
 		}
 	}
@@ -492,8 +573,13 @@ func initializeClusterClientConfig(conf *localconfig.TopLevel) comm.ClientConfig
 		serverRootCAs = append(serverRootCAs, rootCACert)
 	}
 
+	timeShift := conf.General.TLS.TLSHandshakeTimeShift
+	if reuseGrpcListener := reuseListener(conf); !reuseGrpcListener {
+		timeShift = conf.General.Cluster.TLSHandshakeTimeShift
+	}
+
 	cc.SecOpts = comm.SecureOptions{
-		TimeShift:         conf.General.Cluster.TLSHandshakeTimeShift,
+		TimeShift:         timeShift,
 		RequireClientCert: true,
 		CipherSuites:      comm.DefaultTLSCipherSuites,
 		ServerRootCAs:     serverRootCAs,
@@ -510,6 +596,7 @@ func initializeServerConfig(conf *localconfig.TopLevel, metricsProvider metrics.
 	secureOpts := comm.SecureOptions{
 		UseTLS:            conf.General.TLS.Enabled,
 		RequireClientCert: conf.General.TLS.ClientAuthRequired,
+		TimeShift:         conf.General.TLS.TLSHandshakeTimeShift,
 	}
 	// check to see if TLS is enabled
 	if secureOpts.UseTLS {
@@ -620,10 +707,12 @@ func initializeBootstrapChannel(genesisBlock *cb.Block, lf blockledger.Factory) 
 	if err != nil {
 		logger.Fatal("Failed to create the system channel:", err)
 	}
-
-	if err := gl.Append(genesisBlock); err != nil {
-		logger.Fatal("Could not write genesis block to ledger:", err)
+	if gl.Height() == 0 {
+		if err := gl.Append(genesisBlock); err != nil {
+			logger.Fatal("Could not write genesis block to ledger:", err)
+		}
 	}
+	logger.Infof("Initialized the system channel '%s' from bootstrap block", channelID)
 }
 
 func isClusterType(genesisBlock *cb.Block, bccsp bccsp.BCCSP) bool {
@@ -761,7 +850,7 @@ func initializeEtcdraftConsenter(
 		logger.Panicf("Failed obtaining system channel (%s) ledger: %v", systemChannelName, err)
 	}
 	getConfigBlock := func() *cb.Block {
-		return multichannel.ConfigBlock(systemLedger)
+		return multichannel.ConfigBlockOrPanic(systemLedger)
 	}
 
 	icr := onboarding.NewInactiveChainReplicator(ri, getConfigBlock, ri.RegisterChain, conf.General.Cluster.ReplicationBackgroundRefreshInterval)

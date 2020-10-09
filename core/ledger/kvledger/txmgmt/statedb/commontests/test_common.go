@@ -1030,7 +1030,7 @@ func TestApplyUpdatesWithNilHeight(t *testing.T, dbProvider statedb.VersionedDBP
 func TestDataExportImport(
 	t *testing.T,
 	dbProvider statedb.VersionedDBProvider,
-	valueFormat byte) {
+) {
 
 	sourceDB, err := dbProvider.GetDBHandle("source_ledger", nil)
 	require.NoError(t, err)
@@ -1041,11 +1041,11 @@ func TestDataExportImport(
 		for _, ns := range namespaces {
 			for i := 0; i < 6; i++ {
 				sampleKV := &statedb.VersionedKV{
-					CompositeKey: statedb.CompositeKey{
+					CompositeKey: &statedb.CompositeKey{
 						Namespace: ns,
 						Key:       fmt.Sprintf("key-%d", i),
 					},
-					VersionedValue: statedb.VersionedValue{
+					VersionedValue: &statedb.VersionedValue{
 						Version:  version.NewHeight(1, 1),
 						Metadata: []byte(fmt.Sprintf("metadata-for-key-%d-for-%s", i, ns)),
 					},
@@ -1077,43 +1077,41 @@ func TestDataExportImport(
 	// for exporting the data to import into another ledger instance and verifies the
 	// correctness of the imported data
 	verifyExportImport := func(destDBName string, skipNamespaces stringset) {
-		fullScanItr, valFormat, err := sourceDB.GetFullScanIterator(
+		fullScanItr, err := sourceDB.GetFullScanIterator(
 			func(ns string) bool {
 				return skipNamespaces.contains(ns)
 			},
 		)
 		require.NoError(t, err)
-		require.Equal(t, valueFormat, valFormat)
 
-		err = dbProvider.ImportFromSnapshot(destDBName, version.NewHeight(10, 10), fullScanItr, valFormat)
+		err = dbProvider.ImportFromSnapshot(destDBName, version.NewHeight(10, 10), fullScanItr)
 		require.NoError(t, err)
 
 		destinationDB, err := dbProvider.GetDBHandle(destDBName, nil)
 		require.NoError(t, err)
 
-		fullScanItr, valFormat, err = destinationDB.GetFullScanIterator(
+		fullScanItr, err = destinationDB.GetFullScanIterator(
 			func(ns string) bool {
 				return false
 			},
 		)
 		require.NoError(t, err)
-		require.Equal(t, valueFormat, valFormat)
 
 		expectedNamespacesInDestinationDB := allNamesapces.minus(skipNamespaces)
 		actualResults := []*statedb.VersionedKV{}
 		for {
-			ck, _, err := fullScanItr.Next()
+			kv, err := fullScanItr.Next()
 			require.NoError(t, err)
-			if ck == nil {
+			if kv == nil {
 				break
 			}
-			vv, err := destinationDB.GetState(ck.Namespace, ck.Key)
+			vv, err := destinationDB.GetState(kv.Namespace, kv.Key)
 			require.NoError(t, err)
 			actualResults = append(
 				actualResults,
 				&statedb.VersionedKV{
-					CompositeKey:   *ck,
-					VersionedValue: *vv,
+					CompositeKey:   kv.CompositeKey,
+					VersionedValue: vv,
 				},
 			)
 		}

@@ -7,19 +7,27 @@ SPDX-License-Identifier: Apache-2.0
 package etcdraft
 
 import (
+	"crypto/x509"
 	"encoding/base64"
-	"io/ioutil"
-	"path/filepath"
-	"testing"
-
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric-protos-go/common"
 	etcdraftproto "github.com/hyperledger/fabric-protos-go/orderer/etcdraft"
 	"github.com/hyperledger/fabric/bccsp/sw"
 	"github.com/hyperledger/fabric/common/crypto/tlsgen"
+	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/orderer/common/cluster"
 	"github.com/hyperledger/fabric/protoutil"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"io/ioutil"
+	"path/filepath"
+	"testing"
+)
+
+const (
+	consentersTestDataDir = "testdata/consenters_certs/"
+	ca1Dir                = consentersTestDataDir + "ca1"
+	ca2Dir                = consentersTestDataDir + "ca2"
 )
 
 func TestIsConsenterOfChannel(t *testing.T) {
@@ -38,6 +46,12 @@ func TestIsConsenterOfChannel(t *testing.T) {
 		"ZJQ0FURS0tLS0tCg==")
 	require.NoError(t, err)
 
+	ca, err := tlsgen.NewCA()
+	require.NoError(t, err)
+
+	kp, err := ca.NewClientCertKeyPair()
+	require.NoError(t, err)
+
 	validBlock := func() *common.Block {
 		b, err := ioutil.ReadFile(filepath.Join("testdata", "etcdraftgenesis.block"))
 		require.NoError(t, err)
@@ -54,18 +68,24 @@ func TestIsConsenterOfChannel(t *testing.T) {
 	}{
 		{
 			name:          "nil block",
-			expectedError: "nil block",
+			expectedError: "nil block or nil header",
+		},
+		{
+			name:          "nil header",
+			expectedError: "nil block or nil header",
+			configBlock:   &common.Block{},
 		},
 		{
 			name:          "no block data",
 			expectedError: "block data is nil",
-			configBlock:   &common.Block{},
+			configBlock:   &common.Block{Header: &common.BlockHeader{}},
 		},
 		{
 			name: "invalid envelope inside block",
 			expectedError: "failed to unmarshal payload from envelope:" +
 				" error unmarshaling Payload: proto: common.Payload: illegal tag 0 (wire type 1)",
 			configBlock: &common.Block{
+				Header: &common.BlockHeader{},
 				Data: &common.BlockData{
 					Data: [][]byte{protoutil.MarshalOrPanic(&common.Envelope{
 						Payload: []byte{1, 2, 3},
@@ -76,7 +96,7 @@ func TestIsConsenterOfChannel(t *testing.T) {
 		{
 			name:          "valid config block with cert mismatch",
 			configBlock:   validBlock(),
-			certificate:   certInsideConfigBlock[2:],
+			certificate:   kp.Cert,
 			expectedError: cluster.ErrNotInChannel.Error(),
 		},
 		{
@@ -90,6 +110,7 @@ func TestIsConsenterOfChannel(t *testing.T) {
 			require.NoError(t, err)
 
 			consenterCertificate := &ConsenterCertificate{
+				Logger:               flogging.MustGetLogger("test"),
 				ConsenterCertificate: testCase.certificate,
 				CryptoProvider:       cryptoProvider,
 			}
@@ -103,21 +124,27 @@ func TestIsConsenterOfChannel(t *testing.T) {
 	}
 }
 
-func TestCheckConfigMetadata(t *testing.T) {
+func TestVerifyConfigMetadata(t *testing.T) {
 	tlsCA, err := tlsgen.NewCA()
 	if err != nil {
 		panic(err)
 	}
+
+	caRootCert, err := parseCertificateFromBytes(tlsCA.CertBytes())
+	if err != nil {
+		panic(err)
+	}
+
 	serverPair, err := tlsCA.NewServerCertKeyPair("localhost")
-	serverCert := serverPair.Cert
 	if err != nil {
 		panic(err)
 	}
+
 	clientPair, err := tlsCA.NewClientCertKeyPair()
-	clientCert := clientPair.Cert
 	if err != nil {
 		panic(err)
 	}
+
 	validOptions := &etcdraftproto.Options{
 		TickInterval:         "500ms",
 		ElectionTick:         10,
@@ -128,8 +155,18 @@ func TestCheckConfigMetadata(t *testing.T) {
 	singleConsenter := &etcdraftproto.Consenter{
 		Host:          "host1",
 		Port:          10001,
-		ClientTlsCert: clientCert,
-		ServerTlsCert: serverCert,
+		ClientTlsCert: clientPair.Cert,
+		ServerTlsCert: serverPair.Cert,
+	}
+
+	rootCertPool := x509.NewCertPool()
+	rootCertPool.AddCert(caRootCert)
+	goodVerifyingOpts := x509.VerifyOptions{
+		Roots: rootCertPool,
+		KeyUsages: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageClientAuth,
+			x509.ExtKeyUsageServerAuth,
+		},
 	}
 
 	// valid metadata should give nil error
@@ -139,22 +176,25 @@ func TestCheckConfigMetadata(t *testing.T) {
 			singleConsenter,
 		},
 	}
-	require.Nil(t, CheckConfigMetadata(goodMetadata))
+	assert.Nil(t, VerifyConfigMetadata(goodMetadata, goodVerifyingOpts))
 
 	// test variety of bad metadata
 	for _, testCase := range []struct {
 		description string
 		metadata    *etcdraftproto.ConfigMetadata
+		verifyOpts  x509.VerifyOptions
 		errRegex    string
 	}{
 		{
 			description: "nil metadata",
 			metadata:    nil,
 			errRegex:    "nil Raft config metadata",
+			verifyOpts:  goodVerifyingOpts,
 		},
 		{
 			description: "nil options",
 			metadata:    &etcdraftproto.ConfigMetadata{},
+			verifyOpts:  goodVerifyingOpts,
 			errRegex:    "nil Raft config metadata options",
 		},
 		{
@@ -164,7 +204,8 @@ func TestCheckConfigMetadata(t *testing.T) {
 					HeartbeatTick: 0,
 				},
 			},
-			errRegex: "none of HeartbeatTick .* can be zero",
+			verifyOpts: goodVerifyingOpts,
+			errRegex:   "none of HeartbeatTick .* can be zero",
 		},
 		{
 			description: "ElectionTick is 0",
@@ -174,7 +215,8 @@ func TestCheckConfigMetadata(t *testing.T) {
 					ElectionTick:  0,
 				},
 			},
-			errRegex: "none of .* ElectionTick .* can be zero",
+			verifyOpts: goodVerifyingOpts,
+			errRegex:   "none of .* ElectionTick .* can be zero",
 		},
 		{
 			description: "MaxInflightBlocks is 0",
@@ -185,7 +227,8 @@ func TestCheckConfigMetadata(t *testing.T) {
 					MaxInflightBlocks: 0,
 				},
 			},
-			errRegex: "none of .* MaxInflightBlocks .* can be zero",
+			verifyOpts: goodVerifyingOpts,
+			errRegex:   "none of .* MaxInflightBlocks .* can be zero",
 		},
 		{
 			description: "ElectionTick is less than HeartbeatTick",
@@ -196,7 +239,8 @@ func TestCheckConfigMetadata(t *testing.T) {
 					MaxInflightBlocks: validOptions.MaxInflightBlocks,
 				},
 			},
-			errRegex: "ElectionTick .* must be greater than HeartbeatTick",
+			verifyOpts: goodVerifyingOpts,
+			errRegex:   "ElectionTick .* must be greater than HeartbeatTick",
 		},
 		{
 			description: "TickInterval is not parsable",
@@ -208,7 +252,8 @@ func TestCheckConfigMetadata(t *testing.T) {
 					TickInterval:      "abcd",
 				},
 			},
-			errRegex: "failed to parse TickInterval .* to time duration",
+			verifyOpts: goodVerifyingOpts,
+			errRegex:   "failed to parse TickInterval .* to time duration",
 		},
 		{
 			description: "TickInterval is 0",
@@ -220,7 +265,8 @@ func TestCheckConfigMetadata(t *testing.T) {
 					TickInterval:      "0s",
 				},
 			},
-			errRegex: "TickInterval cannot be zero",
+			verifyOpts: goodVerifyingOpts,
+			errRegex:   "TickInterval cannot be zero",
 		},
 		{
 			description: "consenter set is empty",
@@ -228,7 +274,8 @@ func TestCheckConfigMetadata(t *testing.T) {
 				Options:    validOptions,
 				Consenters: []*etcdraftproto.Consenter{},
 			},
-			errRegex: "empty consenter set",
+			verifyOpts: goodVerifyingOpts,
+			errRegex:   "empty consenter set",
 		},
 		{
 			description: "metadata has nil consenter",
@@ -238,7 +285,8 @@ func TestCheckConfigMetadata(t *testing.T) {
 					nil,
 				},
 			},
-			errRegex: "metadata has nil consenter",
+			verifyOpts: goodVerifyingOpts,
+			errRegex:   "metadata has nil consenter",
 		},
 		{
 			description: "consenter has invalid server cert",
@@ -247,11 +295,12 @@ func TestCheckConfigMetadata(t *testing.T) {
 				Consenters: []*etcdraftproto.Consenter{
 					{
 						ServerTlsCert: []byte("invalid"),
-						ClientTlsCert: clientCert,
+						ClientTlsCert: clientPair.Cert,
 					},
 				},
 			},
-			errRegex: "server TLS certificate is not PEM encoded",
+			verifyOpts: goodVerifyingOpts,
+			errRegex:   "no PEM data found in cert",
 		},
 		{
 			description: "consenter has invalid client cert",
@@ -259,12 +308,13 @@ func TestCheckConfigMetadata(t *testing.T) {
 				Options: validOptions,
 				Consenters: []*etcdraftproto.Consenter{
 					{
-						ServerTlsCert: serverCert,
+						ServerTlsCert: serverPair.Cert,
 						ClientTlsCert: []byte("invalid"),
 					},
 				},
 			},
-			errRegex: "client TLS certificate is not PEM encoded",
+			verifyOpts: goodVerifyingOpts,
+			errRegex:   "no PEM data found in cert",
 		},
 		{
 			description: "metadata has duplicate consenters",
@@ -275,11 +325,50 @@ func TestCheckConfigMetadata(t *testing.T) {
 					singleConsenter,
 				},
 			},
-			errRegex: "duplicate consenter",
+			verifyOpts: goodVerifyingOpts,
+			errRegex:   "duplicate consenter",
+		},
+		{
+			description: "consenter has cert signed by unknown authority",
+			metadata: &etcdraftproto.ConfigMetadata{
+				Options: validOptions,
+				Consenters: []*etcdraftproto.Consenter{
+					singleConsenter,
+				},
+			},
+			verifyOpts: x509.VerifyOptions{},
+			errRegex:   "certificate signed by unknown authority",
 		},
 	} {
-		err := CheckConfigMetadata(testCase.metadata)
+		err := VerifyConfigMetadata(testCase.metadata, testCase.verifyOpts)
 		require.NotNil(t, err, testCase.description)
 		require.Regexp(t, testCase.errRegex, err)
 	}
+
+	//test use case when consenter has expired certificates
+	tlsCaCertBytes, err := ioutil.ReadFile(filepath.Join(ca1Dir, "ca.pem"))
+	require.Nil(t, err)
+	tlsCaCert, err := parseCertificateFromBytes(tlsCaCertBytes)
+	require.Nil(t, err)
+
+	tlsClientCert, err := ioutil.ReadFile(filepath.Join(ca1Dir, "client3.pem"))
+	require.Nil(t, err)
+
+	expiredCertVerifyOpts := goodVerifyingOpts
+	expiredCertVerifyOpts.Roots.AddCert(tlsCaCert)
+	consenterWithExpiredCerts := &etcdraftproto.Consenter{
+		Host:          "host1",
+		Port:          10001,
+		ClientTlsCert: tlsClientCert,
+		ServerTlsCert: tlsClientCert,
+	}
+
+	medatadaWithExpiredConsenter := &etcdraftproto.ConfigMetadata{
+		Options: validOptions,
+		Consenters: []*etcdraftproto.Consenter{
+			consenterWithExpiredCerts,
+		},
+	}
+
+	require.Nil(t, VerifyConfigMetadata(medatadaWithExpiredConsenter, expiredCertVerifyOpts))
 }

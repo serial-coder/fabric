@@ -91,7 +91,7 @@ func (creator *BlockPullerCreator) BlockPuller(configBlock *common.Block) (Chann
 	// Extract the TLS CA certs and endpoints from the join-block
 	endpoints, err := cluster.EndpointconfigFromConfigBlock(configBlock, creator.bccsp)
 	if err != nil {
-		return nil, errors.Wrap(err, "error extracting endpoints from config block")
+		return nil, errors.WithMessage(err, "error extracting endpoints from config block")
 	}
 
 	bp := &cluster.BlockPuller{
@@ -99,6 +99,7 @@ func (creator *BlockPullerCreator) BlockPuller(configBlock *common.Block) (Chann
 		Logger:              flogging.MustGetLogger("orderer.common.cluster.puller").With("channel", creator.channelID),
 		RetryTimeout:        creator.clusterConfig.ReplicationRetryTimeout,
 		MaxTotalBufferBytes: creator.clusterConfig.ReplicationBufferSize,
+		MaxPullBlockRetries: uint64(creator.clusterConfig.ReplicationMaxRetries),
 		FetchTimeout:        creator.clusterConfig.ReplicationPullTimeout,
 		Endpoints:           endpoints,
 		Signer:              creator.signer,
@@ -115,11 +116,11 @@ func (creator *BlockPullerCreator) BlockPuller(configBlock *common.Block) (Chann
 func (creator *BlockPullerCreator) UpdateVerifierFromConfigBlock(configBlock *common.Block) error {
 	configEnv, err := cluster.ConfigFromBlock(configBlock)
 	if err != nil {
-		return errors.Wrap(err, "failed to extract config envelope from block")
+		return errors.WithMessage(err, "failed to extract config envelope from block")
 	}
 	verifier, err := creator.blockSigVerifierFactory.VerifierFromConfig(configEnv, creator.channelID)
 	if err != nil {
-		return errors.Wrap(err, "failed to construct a block signature verifier from config envelope")
+		return errors.WithMessage(err, "failed to construct a block signature verifier from config envelope")
 	}
 	creator.blockSigVerifier = verifier
 	return nil
@@ -140,20 +141,24 @@ func (creator *BlockPullerCreator) VerifyBlockSequence(blocks []*common.Block, _
 	if blocks[0].Header.Number == 0 {
 		configEnv, err := cluster.ConfigFromBlock(blocks[0])
 		if err != nil {
-			return errors.Wrap(err, "failed to extract config envelope from genesis block")
+			return errors.WithMessage(err, "failed to extract config envelope from genesis block")
 		}
 		// Bootstrap the verifier from the genesis block, as it will be used to verify
 		// the subsequent blocks in the batch.
 		creator.blockSigVerifier, err = creator.blockSigVerifierFactory.VerifierFromConfig(configEnv, creator.channelID)
 		if err != nil {
-			return errors.Wrap(err, "failed to construct a block signature verifier from genesis block")
+			return errors.WithMessage(err, "failed to construct a block signature verifier from genesis block")
 		}
 		blocksAfterGenesis := blocks[1:]
+		if len(blocksAfterGenesis) == 0 {
+			return nil
+		}
 		return creator.ClusterVerifyBlocks(blocksAfterGenesis, creator.blockSigVerifier)
 	}
 
 	if creator.blockSigVerifier == nil {
 		return errors.New("nil block signature verifier")
 	}
+
 	return creator.ClusterVerifyBlocks(blocks, creator.blockSigVerifier)
 }

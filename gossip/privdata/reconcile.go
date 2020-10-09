@@ -161,14 +161,10 @@ func (r *Reconciler) reconcile() error {
 			logger.Error("reconciliation error when trying to fetch missing items from different peers:", err)
 			return err
 		}
-		if len(fetchedData.AvailableElements) == 0 {
-			logger.Warning("missing private data is not available on other peers")
-			return nil
-		}
 
 		pvtDataToCommit := r.preparePvtDataToCommit(fetchedData.AvailableElements)
-		// commit missing private data that was reconciled and log mismatched
-		pvtdataHashMismatch, err := r.CommitPvtDataOfOldBlocks(pvtDataToCommit)
+		unreconciled := constructUnreconciledMissingData(dig2collectionCfg, fetchedData.AvailableElements)
+		pvtdataHashMismatch, err := r.CommitPvtDataOfOldBlocks(pvtDataToCommit, unreconciled)
 		if err != nil {
 			return errors.Wrap(err, "failed to commit private data")
 		}
@@ -286,7 +282,7 @@ func (r *Reconciler) preparePvtDataToCommit(elements []*protosgossip.PvtDataElem
 func (r *Reconciler) logMismatched(pvtdataMismatched []*ledger.PvtdataHashMismatch) {
 	if len(pvtdataMismatched) > 0 {
 		for _, hashMismatch := range pvtdataMismatched {
-			logger.Warningf("failed to reconcile pvtdata chaincode %s, collection %s, block num %d, tx num %d due to hash mismatch",
+			logger.Warningf("failed to reconcile pvtdata chaincode %s, collection %s, block num %d, tx num %d due to hash mismatch or partially available bootKVs",
 				hashMismatch.Namespace, hashMismatch.Collection, hashMismatch.BlockNum, hashMismatch.TxNum)
 		}
 	}

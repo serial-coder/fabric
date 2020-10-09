@@ -122,16 +122,9 @@ used to further fine tune the cluster communication or replication mechanisms:
    To recover from such a scenario, it is possible to make TLS handshakes
    between ordering nodes consider the time to be shifted backwards a given
    amount that is configured to `TLSHandshakeTimeShift`.
-   In order to be as uninvasive as possible, this configuration option
-   only effects ordering nodes that use a separate gRPC server for their
-   intra-cluster communication.
-   If your cluster is communicating via the same gRPC server that is used
-   to service clients and peers, you need to first reconfigure your orderer
-   by additionally setting `general.cluster.ListenPort`, `general.cluster.ListenAddress`,
-   `ServerCertificate` and `ServerPrivateKey`, and then restarting the orderer
-   in order for the new configuration to take effect.
-
-
+   This setting only applies when a separate cluster listener is in use.  If
+   the cluster service is sharing the orderer's main gRPC server, then instead
+   specify `TLSHandshakeTimeShift` in the `General.TLS` section.
 
 **Consensus parameters:**
 
@@ -140,8 +133,8 @@ used to further fine tune the cluster communication or replication mechanisms:
   * `SnapDir`: specifies the location at which snapshots for `etcd/raft` are stored.
   Each channel will have its own subdirectory named after the channel ID.
 
-There is also a hidden configuration parameter that can be set by adding it to
-the consensus section in the `orderer.yaml`:
+There are also two hidden configuration parameters that can each be set by adding
+them the consensus section in the `orderer.yaml`:
 
   * `EvictionSuspicion`: The cumulative period of time of channel eviction
   suspicion that triggers the node to pull blocks from other nodes and see if it
@@ -150,6 +143,10 @@ the consensus section in the `orderer.yaml`:
   certificate), the node halts its operation for that channel. A node suspects
   its channel eviction when it doesn't know about any elected leader nor can be
   elected as leader in the channel. Defaults to 10 minutes.
+  * `TickIntervalOverride`: If set, this value will be preferred over the tick
+  interval configured in all channels where this ordering node is a consenter.
+  This value should be set only with great care, as a mismatch in tick interval
+  across orderers could result in a loss of quorum for one or more channels.
 
 ### Channel configuration
 
@@ -264,6 +261,9 @@ These expiration dates can range from 10 years from the date of issuance to as
 little as a few months, so check with your issuer. Before the expiration date,
 you will need to rotate these certificates on the node itself and every channel
 the node is joined to, including the system channel.
+
+**Note:** In case the public key of the TLS certificate remains the same, 
+there is no need to issue channel configuration updates.
 
 For each channel the node participates in:
 
