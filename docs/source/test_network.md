@@ -41,44 +41,41 @@ up a Fabric network using the Docker images on your local machine. You can run
 Usage:
   network.sh <Mode> [Flags]
     Modes:
-      up - bring up fabric orderer and peer nodes. No channel is created
-      up createChannel - bring up fabric network with one channel
-      createChannel - create and join a channel after the network is created
-      deployCC - deploy the asset transfer basic chaincode on the channel or specify
-      down - clear the network with docker-compose down
-      restart - restart the network
+      up - Bring up Fabric orderer and peer nodes. No channel is created
+      up createChannel - Bring up fabric network with one channel
+      createChannel - Create and join a channel after the network is created
+      deployCC - Deploy a chaincode to a channel (defaults to asset-transfer-basic)
+      down - Bring down the network
 
     Flags:
     Used with network.sh up, network.sh createChannel:
-    -ca <use CAs> -  create Certificate Authorities to generate the crypto material
-    -c <channel name> - channel name to use (defaults to "mychannel")
-    -s <dbtype> - the database backend to use: goleveldb (default) or couchdb
+    -ca <use CAs> -  Use Certificate Authorities to generate network crypto material
+    -c <channel name> - Name of channel to create (defaults to "mychannel")
+    -s <dbtype> - Peer state database to deploy: goleveldb (default) or couchdb
     -r <max retry> - CLI times out after certain number of attempts (defaults to 5)
-    -d <delay> - delay duration in seconds (defaults to 3)
-    -i <imagetag> - the tag to be used to launch the network (defaults to "latest")
-    -cai <ca_imagetag> - the image tag to be used for CA (defaults to "latest")
-    -verbose - verbose mode
-    Used with network.sh deployCC
-    -c <channel name> - deploy chaincode to channel
-    -ccn <name> - the short name of the chaincode to deploy: basic (default),ledger, private, sbe, secured
-    -ccl <language> - the programming language of the chaincode to deploy: go (default), java, javascript, typescript
-    -ccv <version>  - chaincode version. 1.0 (default)
-    -ccs <sequence>  - chaincode definition sequence. Must be an integer, 1 (default), 2, 3, etc
-    -ccp <path>  - Optional, path to the chaincode. When provided the -ccn will be used as the deployed name and not the short name of the known chaincodes.
-    -ccep <policy>  - Optional, chaincode endorsement policy, using signature policy syntax. The default policy requires an endorsement from Org1 and Org2
-    -cccg <collection-config>  - Optional, path to a private data collections configuration file
-    -cci <fcn name>  - Optional, chaincode init required function to invoke. When provided this function will be invoked after deployment of the chaincode and will define the chaincode as initialization required.
+    -d <delay> - CLI delays for a certain number of seconds (defaults to 3)
+    -i <imagetag> - Docker image tag of Fabric to deploy (defaults to "latest")
+    -cai <ca_imagetag> - Docker image tag of Fabric CA to deploy (defaults to "latest")
+    -verbose - Verbose mode
 
-    -h - print this message
+    Used with network.sh deployCC
+    -c <channel name> - Name of channel to deploy chaincode to
+    -ccn <name> - Chaincode name. This flag can be used to deploy one of the asset transfer samples to a channel. Sample options: basic (default),ledger, private, sbe, secured
+    -ccl <language> - Programming language of the chaincode to deploy: go (default), java, javascript, typescript
+    -ccv <version>  - Chaincode version. 1.0 (default), v2, version3.x, etc
+    -ccs <sequence>  - Chaincode definition sequence. Must be an integer, 1 (default), 2, 3, etc
+    -ccp <path>  - (Optional) File path to the chaincode. When provided, the -ccn flag will be used only for the chaincode name.
+    -ccep <policy>  - (Optional) Chaincode endorsement policy using signature policy syntax. The default policy requires an endorsement from Org1 and Org2
+    -cccg <collection-config>  - (Optional) File path to private data collections configuration file
+    -cci <fcn name>  - (Optional) Name of chaincode initialization function. When a function is provided, the execution of init will be requested and the function will be invoked.
+
+    -h - Print this message
 
  Possible Mode and flag combinations
-   up -ca -c -r -d -s -i -verbose
-   up createChannel -ca -c -r -d -s -i -verbose
+   up -ca -r -d -s -i -cai -verbose
+   up createChannel -ca -c -r -d -s -i -cai -verbose
    createChannel -c -r -d -verbose
    deployCC -ccn -ccl -ccv -ccs -ccp -cci -r -d -verbose
-
- Taking all defaults:
-   network.sh up
 
  Examples:
    network.sh up createChannel -ca -c mychannel -s couchdb -i 2.0.0
@@ -577,6 +574,14 @@ If you have any problems with the tutorial, review the following:
    docker rm -f $(docker ps -aq)
    docker rmi -f $(docker images -q)
    ```
+-  If you are running Docker Desktop on macOS and experience the following error during chaincode installation:
+   ```
+   Error: chaincode install failed with status: 500 - failed to invoke backing implementation of 'InstallChaincode': could not build chaincode: docker build failed: docker image inspection failed: Get "http://unix.sock/images/dev-peer0.org1.example.com-basic_1.0-4ec191e793b27e953ff2ede5a8bcc63152cecb1e4c3f301a26e22692c61967ad-42f57faac8360472e47cbbbf3940e81bba83439702d085878d148089a1b213ca/json": dial unix /host/var/run/docker.sock: connect: no such file or directory
+   Chaincode installation on peer0.org1 has failed
+   Deploying chaincode failed
+   ```
+
+   This problem is caused by a newer version of Docker Desktop for macOS. To resolve this issue, in the Docker Desktop preferences, uncheck the box `Use gRPC FUSE for file sharing` to use the legacy osxfs file sharing instead and click **Apply & Restart**.
 
 -  If you see errors on your create, approve, commit, invoke or query commands,
    make sure you have properly updated the channel name and chaincode name.
