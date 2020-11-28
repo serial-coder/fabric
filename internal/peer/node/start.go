@@ -32,6 +32,7 @@ import (
 	"github.com/hyperledger/fabric/common/crypto"
 	"github.com/hyperledger/fabric/common/crypto/tlsgen"
 	"github.com/hyperledger/fabric/common/deliver"
+	"github.com/hyperledger/fabric/common/fabhttp"
 	"github.com/hyperledger/fabric/common/flogging"
 	floggingmetrics "github.com/hyperledger/fabric/common/flogging/metrics"
 	"github.com/hyperledger/fabric/common/grpclogging"
@@ -954,17 +955,17 @@ func registerDiscoveryService(
 	gSup := gossip.NewDiscoverySupport(gossipService)
 	ccSup := ccsupport.NewDiscoverySupport(metadataProvider)
 	ea := endorsement.NewEndorsementAnalyzer(gSup, ccSup, acl, metadataProvider)
-	confSup := config.NewDiscoverySupport(config.CurrentConfigBlockGetterFunc(func(channelID string) *common.Block {
+	confSup := config.NewDiscoverySupport(config.CurrentConfigGetterFunc(func(channelID string) *common.Config {
 		channel := peerInstance.Channel(channelID)
 		if channel == nil {
 			return nil
 		}
-		block, err := peer.ConfigBlockFromLedger(channel.Ledger())
+		config, err := peer.RetrievePersistedChannelConfig(channel.Ledger())
 		if err != nil {
-			logger.Error("failed to get config block", err)
+			logger.Errorw("failed to get channel config", "error", err)
 			return nil
 		}
-		return block
+		return config
 	}))
 	support := discsupport.NewDiscoverySupport(acl, gSup, ea, confSup, acl)
 	svc := discovery.NewService(discovery.Config{
@@ -1221,8 +1222,17 @@ func initGossipService(
 
 func newOperationsSystem(coreConfig *peer.Config) *operations.System {
 	return operations.NewSystem(operations.Options{
-		Logger:        flogging.MustGetLogger("peer.operations"),
-		ListenAddress: coreConfig.OperationsListenAddress,
+		Options: fabhttp.Options{
+			Logger:        flogging.MustGetLogger("peer.operations"),
+			ListenAddress: coreConfig.OperationsListenAddress,
+			TLS: fabhttp.TLS{
+				Enabled:            coreConfig.OperationsTLSEnabled,
+				CertFile:           coreConfig.OperationsTLSCertFile,
+				KeyFile:            coreConfig.OperationsTLSKeyFile,
+				ClientCertRequired: coreConfig.OperationsTLSClientAuthRequired,
+				ClientCACertFiles:  coreConfig.OperationsTLSClientRootCAs,
+			},
+		},
 		Metrics: operations.MetricsOptions{
 			Provider: coreConfig.MetricsProvider,
 			Statsd: &operations.Statsd{
@@ -1231,13 +1241,6 @@ func newOperationsSystem(coreConfig *peer.Config) *operations.System {
 				WriteInterval: coreConfig.StatsdWriteInterval,
 				Prefix:        coreConfig.StatsdPrefix,
 			},
-		},
-		TLS: operations.TLS{
-			Enabled:            coreConfig.OperationsTLSEnabled,
-			CertFile:           coreConfig.OperationsTLSCertFile,
-			KeyFile:            coreConfig.OperationsTLSKeyFile,
-			ClientCertRequired: coreConfig.OperationsTLSClientAuthRequired,
-			ClientCACertFiles:  coreConfig.OperationsTLSClientRootCAs,
 		},
 		Version: metadata.Version,
 	})

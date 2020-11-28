@@ -717,7 +717,7 @@ func (n *Network) GenerateConfigTree() {
 // written to ${rootDir}/${Channel.Name}_tx.pb.
 func (n *Network) Bootstrap() {
 	if n.DockerClient != nil {
-		n.createDockerNetwork()
+		n.CreateDockerNetwork()
 	}
 
 	sess, err := n.Cryptogen(commands.Generate{
@@ -753,7 +753,7 @@ func (n *Network) Bootstrap() {
 	n.ConcatenateTLSCACertificates()
 }
 
-func (n *Network) createDockerNetwork() {
+func (n *Network) CreateDockerNetwork() {
 	_, err := n.DockerClient.CreateNetwork(
 		docker.CreateNetworkOptions{
 			Name:   n.NetworkID,
@@ -1115,6 +1115,31 @@ func (n *Network) JoinChannel(name string, o *Orderer, peers ...*Peer) {
 	}
 }
 
+func (n *Network) JoinChannelBySnapshot(snapshotDir string, peers ...*Peer) {
+	if len(peers) == 0 {
+		return
+	}
+
+	for _, p := range peers {
+		sess, err := n.PeerAdminSession(p, commands.ChannelJoinBySnapshot{
+			SnapshotPath: snapshotDir,
+			ClientAuth:   n.ClientAuthRequired,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(sess, n.EventuallyTimeout).Should(gexec.Exit(0))
+	}
+}
+
+func (n *Network) JoinBySnapshotStatus(p *Peer) []byte {
+	sess, err := n.PeerAdminSession(p, commands.ChannelJoinBySnapshotStatus{
+		ClientAuth: n.ClientAuthRequired,
+	})
+	Expect(err).NotTo(HaveOccurred())
+	Eventually(sess, n.EventuallyTimeout).Should(gexec.Exit(0))
+	return sess.Out.Contents()
+
+}
+
 // Cryptogen starts a gexec.Session for the provided cryptogen command.
 func (n *Network) Cryptogen(command Command) (*gexec.Session, error) {
 	cmd := NewCommand(n.Components.Cryptogen(), command)
@@ -1322,6 +1347,13 @@ func (n *Network) peerCommand(command Command, tlsDir string, env ...string) *ex
 	requiredPeerAddresses := flagCount("--peerAddresses", cmd.Args)
 	for i := 0; i < requiredPeerAddresses; i++ {
 		cmd.Args = append(cmd.Args, "--tlsRootCertFiles")
+		cmd.Args = append(cmd.Args, n.CACertsBundlePath())
+	}
+
+	// If there is --peerAddress, add --tlsRootCertFile parameter
+	requiredPeerAddress := flagCount("--peerAddress", cmd.Args)
+	if requiredPeerAddress > 0 {
+		cmd.Args = append(cmd.Args, "--tlsRootCertFile")
 		cmd.Args = append(cmd.Args, n.CACertsBundlePath())
 	}
 	return cmd
@@ -1637,6 +1669,7 @@ const (
 	ProfilePort    PortName = "Profile"
 	OperationsPort PortName = "Operations"
 	ClusterPort    PortName = "Cluster"
+	AdminPort      PortName = "Admin"
 )
 
 // PeerPortNames returns the list of ports that need to be reserved for a Peer.
@@ -1647,7 +1680,7 @@ func PeerPortNames() []PortName {
 // OrdererPortNames  returns the list of ports that need to be reserved for an
 // Orderer.
 func OrdererPortNames() []PortName {
-	return []PortName{ListenPort, ProfilePort, OperationsPort, ClusterPort}
+	return []PortName{ListenPort, ProfilePort, OperationsPort, ClusterPort, AdminPort}
 }
 
 // BrokerPortNames returns the list of ports that need to be reserved for a

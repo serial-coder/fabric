@@ -12,10 +12,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/golang/protobuf/proto"
 	pcommon "github.com/hyperledger/fabric-protos-go/common"
 	pb "github.com/hyperledger/fabric-protos-go/peer"
 	"github.com/hyperledger/fabric/bccsp"
@@ -132,54 +132,14 @@ func InitCrypto(mspMgrConfigDir, localMSPID, localMSPType string) error {
 
 	// Init the BCCSP
 	SetBCCSPKeystorePath()
-
 	bccspConfig := factory.GetDefaultOpts()
 	if err := viper.UnmarshalKey("peer.BCCSP", &bccspConfig); err != nil {
 		return errors.WithMessage(err, "could not decode peer BCCSP configuration")
 	}
 
-	if err := SetBCCSPConfigOverrides(bccspConfig); err != nil {
-		return err
-	}
-
 	err = mspmgmt.LoadLocalMspWithType(mspMgrConfigDir, bccspConfig, localMSPID, localMSPType)
 	if err != nil {
 		return errors.WithMessagef(err, "error when setting up MSP of type %s from directory %s", localMSPType, mspMgrConfigDir)
-	}
-
-	return nil
-}
-
-// Overrides BCCSP config values when corresponding environment variables
-// are set.
-func SetBCCSPConfigOverrides(bccspConfig *factory.FactoryOpts) error {
-	if pkcs11Default, exist := os.LookupEnv("CORE_PEER_BCCSP_DEFAULT"); exist {
-		bccspConfig.Default = pkcs11Default
-	}
-
-	// PKCS11 Overrides
-	if pkcs11Hash, exist := os.LookupEnv("CORE_PEER_BCCSP_PKCS11_HASH"); exist {
-		bccspConfig.PKCS11.Hash = pkcs11Hash
-	}
-
-	if pkcs11Security, exist := os.LookupEnv("CORE_PEER_BCCSP_PKCS11_SECURITY"); exist {
-		pkcs11Sec, err := strconv.Atoi(pkcs11Security)
-		if err != nil {
-			return errors.Errorf("CORE_PEER_BCCSP_PKCS11_SECURITY set to non-integer value: %s", pkcs11Security)
-		}
-		bccspConfig.PKCS11.Security = pkcs11Sec
-	}
-
-	if pkcs11Library, exist := os.LookupEnv("CORE_PEER_BCCSP_PKCS11_LIBRARY"); exist {
-		bccspConfig.PKCS11.Library = pkcs11Library
-	}
-
-	if pkcs11Label, exist := os.LookupEnv("CORE_PEER_BCCSP_PKCS11_LABEL"); exist {
-		bccspConfig.PKCS11.Label = pkcs11Label
-	}
-
-	if pkcs11Pin, exist := os.LookupEnv("CORE_PEER_BCCSP_PKCS11_PIN"); exist {
-		bccspConfig.PKCS11.Pin = pkcs11Pin
 	}
 
 	return nil
@@ -217,7 +177,7 @@ func GetOrdererEndpointOfChain(chainID string, signer Signer, endorserClient pb.
 		ChaincodeSpec: &pb.ChaincodeSpec{
 			Type:        pb.ChaincodeSpec_Type(pb.ChaincodeSpec_Type_value["GOLANG"]),
 			ChaincodeId: &pb.ChaincodeID{Name: "cscc"},
-			Input:       &pb.ChaincodeInput{Args: [][]byte{[]byte(cscc.GetConfigBlock), []byte(chainID)}},
+			Input:       &pb.ChaincodeInput{Args: [][]byte{[]byte(cscc.GetChannelConfig), []byte(chainID)}},
 		},
 	}
 
@@ -228,40 +188,36 @@ func GetOrdererEndpointOfChain(chainID string, signer Signer, endorserClient pb.
 
 	prop, _, err := protoutil.CreateProposalFromCIS(pcommon.HeaderType_CONFIG, "", invocation, creator)
 	if err != nil {
-		return nil, errors.WithMessage(err, "error creating GetConfigBlock proposal")
+		return nil, errors.WithMessage(err, "error creating GetChannelConfig proposal")
 	}
 
 	signedProp, err := protoutil.GetSignedProposal(prop, signer)
 	if err != nil {
-		return nil, errors.WithMessage(err, "error creating signed GetConfigBlock proposal")
+		return nil, errors.WithMessage(err, "error creating signed GetChannelConfig proposal")
 	}
 
 	proposalResp, err := endorserClient.ProcessProposal(context.Background(), signedProp)
 	if err != nil {
-		return nil, errors.WithMessage(err, "error endorsing GetConfigBlock")
+		return nil, errors.WithMessage(err, "error endorsing GetChannelConfig")
 	}
 
 	if proposalResp == nil {
-		return nil, errors.WithMessage(err, "error nil proposal response")
+		return nil, errors.New("received nil proposal response")
 	}
 
 	if proposalResp.Response.Status != 0 && proposalResp.Response.Status != 200 {
 		return nil, errors.Errorf("error bad proposal response %d: %s", proposalResp.Response.Status, proposalResp.Response.Message)
 	}
 
-	// parse config block
-	block, err := protoutil.UnmarshalBlock(proposalResp.Response.Payload)
-	if err != nil {
-		return nil, errors.WithMessage(err, "error unmarshaling config block")
+	// parse config
+	channelConfig := &pcommon.Config{}
+	if err := proto.Unmarshal(proposalResp.Response.Payload, channelConfig); err != nil {
+		return nil, errors.WithMessage(err, "error unmarshaling channel config")
 	}
 
-	envelopeConfig, err := protoutil.ExtractEnvelope(block, 0)
+	bundle, err := channelconfig.NewBundle(chainID, channelConfig, cryptoProvider)
 	if err != nil {
-		return nil, errors.WithMessage(err, "error extracting config block envelope")
-	}
-	bundle, err := channelconfig.NewBundleFromEnvelope(envelopeConfig, cryptoProvider)
-	if err != nil {
-		return nil, errors.WithMessage(err, "error loading config block")
+		return nil, errors.WithMessage(err, "error loading channel config")
 	}
 
 	return bundle.ChannelConfig().OrdererAddresses(), nil
