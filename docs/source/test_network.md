@@ -2,16 +2,18 @@
 
 After you have downloaded the Hyperledger Fabric Docker images and samples, you
 can deploy a test network by using scripts that are provided in the
-`fabric-samples` repository. You can use the test network to learn about Fabric
-by running nodes on your local machine. More experienced developers can use the
+`fabric-samples` repository. The test network is provided for learning about Fabric
+by running nodes on your local machine. Developers can use the
 network to test their smart contracts and applications. The network is meant to
-be used only as a tool for education and testing. It should not be used as a
-template for deploying a production network. To learn about using Fabric in
-production, see [Deploying a production network](deployment_guide_overview.html).
+be used only as a tool for education and testing and not as a model for how to set up
+a network. In general, modifications to the scripts are discouraged and could break the network. It is based on a limited configuration that should not be used as a template for deploying a production network:
+- It includes two peer organizations and an ordering organization.
+- For simplicity, a single node Raft ordering service is configured.
+- To reduce complexity, a TLS Certificate Authority (CA) is not deployed. All certificates are issued by the root CAs.
+- The sample network deploys a Fabric network with Docker Compose. Because the
+nodes are isolated within a Docker Compose network, the test network is not configured to connect to other running Fabric nodes.
 
-The sample network deploys a Fabric network with Docker Compose. Because the
-nodes are isolated within a Docker Compose network, the test network is not
-configured to connect to other running fabric nodes.
+To learn how to use Fabric in production, see [Deploying a production network](deployment_guide_overview.html).
 
 **Note:** These instructions have been verified to work against the
 latest stable Docker images and the pre-compiled setup utilities within the
@@ -60,11 +62,11 @@ Usage:
 
     Used with network.sh deployCC
     -c <channel name> - Name of channel to deploy chaincode to
-    -ccn <name> - Chaincode name. This flag can be used to deploy one of the asset transfer samples to a channel. Sample options: basic (default),ledger, private, sbe, secured
+    -ccn <name> - Chaincode name.
     -ccl <language> - Programming language of the chaincode to deploy: go (default), java, javascript, typescript
     -ccv <version>  - Chaincode version. 1.0 (default), v2, version3.x, etc
     -ccs <sequence>  - Chaincode definition sequence. Must be an integer, 1 (default), 2, 3, etc
-    -ccp <path>  - (Optional) File path to the chaincode. When provided, the -ccn flag will be used only for the chaincode name.
+    -ccp <path>  - File path to the chaincode.
     -ccep <policy>  - (Optional) Chaincode endorsement policy using signature policy syntax. The default policy requires an endorsement from Org1 and Org2
     -cccg <collection-config>  - (Optional) File path to private data collections configuration file
     -cci <fcn name>  - (Optional) Name of chaincode initialization function. When a function is provided, the execution of init will be requested and the function will be invoked.
@@ -80,7 +82,7 @@ Usage:
  Examples:
    network.sh up createChannel -ca -c mychannel -s couchdb -i 2.0.0
    network.sh createChannel -c channelName
-   network.sh deployCC -ccn basic -ccl javascript
+   network.sh deployCC -ccn basic -ccp ../asset-transfer-basic/chaincode-javascript/ -ccl javascript
    network.sh deployCC -ccn mychaincode -ccp ./user/mychaincode -ccv 1 -ccl javascript
 ```
 
@@ -245,15 +247,14 @@ chaincode is ready to be used.
 After you have used the `network.sh` to create a channel, you can start a
 chaincode on the channel using the following command:
 ```
-./network.sh deployCC
+./network.sh deployCC -ccn basic -ccp ../asset-transfer-basic/chaincode-go -ccl go
 ```
 The `deployCC` subcommand will install the **asset-transfer (basic)** chaincode on
 ``peer0.org1.example.com`` and ``peer0.org2.example.com`` and then deploy
 the chaincode on the channel specified using the channel flag (or `mychannel`
 if no channel is specified).  If you are deploying a chaincode for the first
-time, the script will install the chaincode dependencies. By default, The script
-installs the Go version of the asset-transfer (basic) chaincode. However, you can use the
-language flag, `-l`, to install the typescript or javascript versions of the chaincode.
+time, the script will install the chaincode dependencies. You can use the
+language flag, `-l`, to install the Go, typescript or javascript versions of the chaincode.
 You can find the asset-transfer (basic) chaincode in the `asset-transfer-basic` folder of the `fabric-samples`
 directory. This folder contains sample chaincode that are provided as examples and
 used by tutorials to highlight Fabric features.
@@ -291,11 +292,11 @@ export CORE_PEER_ADDRESS=localhost:7051
 The `CORE_PEER_TLS_ROOTCERT_FILE` and `CORE_PEER_MSPCONFIGPATH` environment
 variables point to the Org1 crypto material in the `organizations` folder.
 
-If you used `./network.sh deployCC` to install and start the asset-transfer (basic) chaincode, you can invoke the `InitLedger` function of the (Go) chaincode to put an initial list of assets on the ledger (if using typescript or javascript `./network.sh deployCC -l javascript` for example, you will invoke the `InitLedger` function of the respective chaincodes).
+If you used `./network.sh deployCC -ccl go` to install and start the asset-transfer (basic) chaincode, you can invoke the `InitLedger` function of the (Go) chaincode to put an initial list of assets on the ledger (if using typescript or javascript `./network.sh deployCC -ccl javascript` for example, you will invoke the `InitLedger` function of the respective chaincodes).
 
 Run the following command to initialize the ledger with assets:
 ```
-peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile ${PWD}/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem -C mychannel -n basic --peerAddresses localhost:7051 --tlsRootCertFiles ${PWD}/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt --peerAddresses localhost:9051 --tlsRootCertFiles ${PWD}/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt -c '{"function":"InitLedger","Args":[]}'
+peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "${PWD}/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem" -C mychannel -n basic --peerAddresses localhost:7051 --tlsRootCertFiles "${PWD}/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt" --peerAddresses localhost:9051 --tlsRootCertFiles "${PWD}/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt" -c '{"function":"InitLedger","Args":[]}'
 ```
 If successful, you should see similar output to below:
 ```
@@ -318,7 +319,7 @@ If successful, you should see the following output:
 ```
 Chaincodes are invoked when a network member wants to transfer or change an asset on the ledger. Use the following command to change the owner of an asset on the ledger by invoking the asset-transfer (basic) chaincode:
 ```
-peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile ${PWD}/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem -C mychannel -n basic --peerAddresses localhost:7051 --tlsRootCertFiles ${PWD}/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt --peerAddresses localhost:9051 --tlsRootCertFiles ${PWD}/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt -c '{"function":"TransferAsset","Args":["asset6","Christopher"]}'
+peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "${PWD}/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem" -C mychannel -n basic --peerAddresses localhost:7051 --tlsRootCertFiles "${PWD}/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt" --peerAddresses localhost:9051 --tlsRootCertFiles "${PWD}/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt" -c '{"function":"TransferAsset","Args":["asset6","Christopher"]}'
 ```
 
 If the command is successful, you should see the following response:

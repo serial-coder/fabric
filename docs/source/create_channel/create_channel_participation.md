@@ -200,7 +200,7 @@ Because this tutorial demonstrates the process for creating a channel with **thr
 
 #### Configure the `orderer.yaml` file for each orderer
 
-Follow the instructions in the [ordering service deployment guide](../deployorderer/ordererdeploy.html) to build an ordering service with three ordering nodes. However, because the system channel is no longer required when you start an orderer, you can skip the entire process of [generating the genesis block](../deployorderer/ordererdeploy.html#creating-the-genesis-block) in those instructions. In addition, when you configure the `orderer.yaml` file for each orderer, there are a few other modifications you need to make to leverage this feature. You can refer to the orderer [sampleconfig](https://github.com/hyperledger/fabric/blob/{BRANCH}/sampleconfig/orderer.yaml) for more information about these parameters.
+Follow the instructions in the [ordering service deployment guide](../deployorderer/ordererdeploy.html) to build an ordering service with three ordering nodes. Note that when you configure the `orderer.yaml` file for each orderer, you will need to make modifications to the [`ChannelParticipation`](../deployorderer/ordererchecklist.html#channelparticipation) and [`General.BoostrapMethod`](../deployorderer/ordererchecklist.html#general-bootstrapmethod) parameters to leverage this feature.
 
 - `General.BootstrapMethod` - Set this value to `none`. Because the system channel is no longer required, the `orderer.yaml` file on each orderer needs to be configured with `BootstrapMethod: none` which means that no bootstrap block is required or used to start up the orderer.
 - `Admin.ListenAddress` - The orderer admin server address (host and port) that can be used by the `osnadmin` command to configure channels on the ordering service. This value should be a unique `host:port` combination to avoid conflicts.
@@ -358,7 +358,7 @@ An unlimited number of profiles can be listed in the `Profiles` section accordin
 After you have completed editing the `configtx.yaml`, you can use it to create a new channel for the peer organizations. Every channel configuration starts with a genesis block. Because we previously set the environment variables for the `configtxgen` tool, you can run the following command to build the genesis block for `channel1` using the `SampleAppChannelEtcdRaft` profile:
 
 ```
-configtxgen -profile SampleAppGenesisEtcdRaft -outputBlock ./channel-artifacts/channel1.tx -channelID channel1
+configtxgen -profile SampleAppGenesisEtcdRaft -outputBlock genesis_block.pb -channelID channel1
 ```
 
 Where:
@@ -388,7 +388,7 @@ export OSN_TLS_CA_ROOT_CERT=../config/organizations/ordererOrganizations/orderer
 export ADMIN_TLS_SIGN_CERT=../config/admin-client/client-tls-cert.pem
 export ADMIN_TLS_PRIVATE_KEY=../config/admin-client/client-tls-key.pem
 
-osnadmin channel join –-channel-id [CHANNEL_NAME]  --config-block [CHANNEL_CONFIG_BLOCK] -o [ORDERER_ADMIN_LISTENADDRESS] --ca-file $OSN_TLS_CA_ROOT_CERT --client-cert $ADMIN_TLS_SIGN_CERT --client-key $ADMIN_TLS_PRIVATE_KEY
+osnadmin channel join --channel-id [CHANNEL_NAME]  --config-block [CHANNEL_CONFIG_BLOCK] -o [ORDERER_ADMIN_LISTENADDRESS] --ca-file $OSN_TLS_CA_ROOT_CERT --client-cert $ADMIN_TLS_SIGN_CERT --client-key $ADMIN_TLS_PRIVATE_KEY
 ```
 
 Replace:
@@ -401,7 +401,7 @@ Replace:
 
 For example:
 ```
-osnadmin channel join –-channel-id channel1 --config-block genesis_block.pb -o OSN1.example.com:7050 --ca-file $OSN_TLS_CA_ROOT_CERT --client-cert $ADMIN_TLS_SIGN_CERT --client-key $ADMIN_TLS_PRIVATE_KEY
+osnadmin channel join --channel-id channel1 --config-block genesis_block.pb -o OSN1.example.com:7050 --ca-file $OSN_TLS_CA_ROOT_CERT --client-cert $ADMIN_TLS_SIGN_CERT --client-key $ADMIN_TLS_PRIVATE_KEY
 ```
 
 **Note:** Because the connection between the `osnadmin` CLI and the orderer requires mutual TLS, you need to pass the `--client-cert` and `--client-key` parameters on each `osadmin` command. The `--client-cert` parameter points to the admin client certificate and `--client-key` refers to the admin client private key, both issued by the admin client TLS CA.
@@ -432,12 +432,12 @@ After the first orderer is added to the channel, subsequent nodes can join from 
 Use the `osnadmin channel list` command with the `--channel-id` flag to view the detailed `status` and `consensusRelation` of any **channel** on any ordering node:
 
 ```
-osnadmin channel list –-channel-id [CHANNEL_NAME] -o [ORDERER_ADMIN_LISTENADDRESS] --ca-file $OSN_TLS_CA_ROOT_CERT --client-cert $ADMIN_TLS_SIGN_CERT --client-key $ADMIN_TLS_PRIVATE_KEY
+osnadmin channel list --channel-id [CHANNEL_NAME] -o [ORDERER_ADMIN_LISTENADDRESS] --ca-file $OSN_TLS_CA_ROOT_CERT --client-cert $ADMIN_TLS_SIGN_CERT --client-key $ADMIN_TLS_PRIVATE_KEY
 ```
 
 For example:
 ```
-osnadmin channel list –-channel-id channel1 -o HOST2:7081 --ca-file $OSN_TLS_CA_ROOT_CERT --client-cert $ADMIN_TLS_SIGN_CERT --client-key $ADMIN_TLS_PRIVATE_KEY
+osnadmin channel list --channel-id channel1 -o HOST2:7081 --ca-file $OSN_TLS_CA_ROOT_CERT --client-cert $ADMIN_TLS_SIGN_CERT --client-key $ADMIN_TLS_PRIVATE_KEY
 ```
 
 Replace:
@@ -479,7 +479,7 @@ To simplify the tutorial, we assume this additional orderer is part of the same 
 For this tutorial, the new orderer is not part of the consenter set. Run the following command to join the new orderer to the channel:
 
 ```
-osnadmin channel join –-channel-id [CHANNEL_NAME]  --config-block [CHANNEL_CONFIG_BLOCK] -o [ORDERER_ADMIN_LISTENADDRESS] --ca-file $OSN_TLS_CA_ROOT_CERT --client-cert $ADMIN_TLS_SIGN_CERT --client-key $ADMIN_TLS_PRIVATE_KEY
+osnadmin channel join --channel-id [CHANNEL_NAME]  --config-block [CHANNEL_CONFIG_BLOCK] -o [ORDERER_ADMIN_LISTENADDRESS] --ca-file $OSN_TLS_CA_ROOT_CERT --client-cert $ADMIN_TLS_SIGN_CERT --client-key $ADMIN_TLS_PRIVATE_KEY
 ```
 
 An orderer can join the channel by providing the genesis block, or the latest config block. But the value of `consensusRelation` will always be "follower" until this orderer is added to the channel's consenter set, by submitting an update to the channel configuration.
@@ -541,7 +541,7 @@ After the channel has been created, you can follow the normal process to join pe
 
 ### Add or remove orderers from existing channels
 
-You can continue to use the `osnadmin channel join` and `osnadmin channel remove` commands to add and remove orderers on each channel according to your business needs. Be aware that before you remove a channel from an orderer, it is recommended that you first remove the orderer from the channel's consenter set by submitting an channel update request.
+You can continue to use the `osnadmin channel join` and `osnadmin channel remove` commands to add and remove orderers on each channel according to your business needs. Be aware that before you remove a channel from an orderer, it is recommended that you first remove the orderer from the channel's consenter set by submitting a channel update request.
 
 <!--- Licensed under Creative Commons Attribution 4.0 International License
 https://creativecommons.org/licenses/by/4.0/ -->

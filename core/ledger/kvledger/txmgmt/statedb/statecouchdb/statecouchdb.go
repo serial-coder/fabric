@@ -133,20 +133,22 @@ func (provider *VersionedDBProvider) GetDBHandle(dbName string, nsProvider state
 	provider.mux.Lock()
 	defer provider.mux.Unlock()
 	vdb := provider.databases[dbName]
-	if vdb == nil {
-		var err error
-		vdb, err = newVersionedDB(
-			provider.couchInstance,
-			provider.redoLoggerProvider.newRedoLogger(dbName),
-			dbName,
-			provider.cache,
-			nsProvider,
-		)
-		if err != nil {
-			return nil, err
-		}
-		provider.databases[dbName] = vdb
+	if vdb != nil {
+		return vdb, nil
 	}
+
+	var err error
+	vdb, err = newVersionedDB(
+		provider.couchInstance,
+		provider.redoLoggerProvider.newRedoLogger(dbName),
+		dbName,
+		provider.cache,
+		nsProvider,
+	)
+	if err != nil {
+		return nil, err
+	}
+	provider.databases[dbName] = vdb
 	return vdb, nil
 }
 
@@ -201,7 +203,7 @@ func (provider *VersionedDBProvider) Close() {
 // It is not an error if a database does not exist.
 func (provider *VersionedDBProvider) Drop(dbName string) error {
 	metadataDBName := constructMetadataDBName(dbName)
-	couchDBDatabase := couchDatabase{couchInstance: provider.couchInstance, dbName: metadataDBName, indexWarmCounter: 1}
+	couchDBDatabase := couchDatabase{couchInstance: provider.couchInstance, dbName: metadataDBName}
 	_, couchDBReturn, err := couchDBDatabase.getDatabaseInfo()
 	if couchDBReturn != nil && couchDBReturn.StatusCode == 404 {
 		// db does not exist
@@ -326,25 +328,28 @@ func (vdb *VersionedDB) getNamespaceDBHandle(namespace string) (*couchDatabase, 
 	namespaceDBName := constructNamespaceDBName(vdb.chainName, namespace)
 	vdb.mux.Lock()
 	defer vdb.mux.Unlock()
+
 	db = vdb.namespaceDBs[namespace]
-	if db == nil {
-		var err error
-		if _, ok := vdb.channelMetadata.NamespaceDBsInfo[namespace]; !ok {
-			logger.Debugf("[%s] add namespaceDBInfo for namespace %s", vdb.chainName, namespace)
-			vdb.channelMetadata.NamespaceDBsInfo[namespace] = &namespaceDBInfo{
-				Namespace: namespace,
-				DBName:    namespaceDBName,
-			}
-			if err = vdb.writeChannelMetadata(); err != nil {
-				return nil, err
-			}
+	if db != nil {
+		return db, nil
+	}
+
+	var err error
+	if _, ok := vdb.channelMetadata.NamespaceDBsInfo[namespace]; !ok {
+		logger.Debugf("[%s] add namespaceDBInfo for namespace %s", vdb.chainName, namespace)
+		vdb.channelMetadata.NamespaceDBsInfo[namespace] = &namespaceDBInfo{
+			Namespace: namespace,
+			DBName:    namespaceDBName,
 		}
-		db, err = createCouchDatabase(vdb.couchInstance, namespaceDBName)
-		if err != nil {
+		if err = vdb.writeChannelMetadata(); err != nil {
 			return nil, err
 		}
-		vdb.namespaceDBs[namespace] = db
 	}
+	db, err = createCouchDatabase(vdb.couchInstance, namespaceDBName)
+	if err != nil {
+		return nil, err
+	}
+	vdb.namespaceDBs[namespace] = db
 	return db, nil
 }
 
@@ -447,15 +452,17 @@ func (vdb *VersionedDB) LoadCommittedVersions(keys []*statedb.CompositeKey) erro
 // GetVersion implements method in VersionedDB interface
 func (vdb *VersionedDB) GetVersion(namespace string, key string) (*version.Height, error) {
 	version, keyFound := vdb.GetCachedVersion(namespace, key)
-	if !keyFound {
-		// This if block get executed only during simulation because during commit
-		// we always call `LoadCommittedVersions` before calling `GetVersion`
-		vv, err := vdb.GetState(namespace, key)
-		if err != nil || vv == nil {
-			return nil, err
-		}
-		version = vv.Version
+	if keyFound {
+		return version, nil
 	}
+
+	// This if block get executed only during simulation because during commit
+	// we always call `LoadCommittedVersions` before calling `GetVersion`
+	vv, err := vdb.GetState(namespace, key)
+	if err != nil || vv == nil {
+		return nil, err
+	}
+	version = vv.Version
 	return version, nil
 }
 
@@ -762,20 +769,6 @@ func (vdb *VersionedDB) postCommitProcessing(committers []*committer, namespaces
 		}
 
 	}()
-
-	for _, ns := range namespaces {
-		db, err := vdb.getNamespaceDBHandle(ns)
-		if err != nil {
-			return err
-		}
-		if db.couchInstance.conf.WarmIndexesAfterNBlocks > 0 {
-			if db.indexWarmCounter >= db.couchInstance.conf.WarmIndexesAfterNBlocks {
-				go db.runWarmIndexAllIndexes()
-				db.indexWarmCounter = 0
-			}
-			db.indexWarmCounter++
-		}
-	}
 
 	// Record a savepoint at a given height
 	if err := vdb.recordSavepoint(height); err != nil {
