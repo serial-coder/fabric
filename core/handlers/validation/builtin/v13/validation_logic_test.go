@@ -6,9 +6,6 @@ SPDX-License-Identifier: Apache-2.0
 package v13
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -24,7 +21,6 @@ import (
 	commonerrors "github.com/hyperledger/fabric/common/errors"
 	"github.com/hyperledger/fabric/common/policydsl"
 	"github.com/hyperledger/fabric/core/committer/txvalidator/v14"
-	"github.com/hyperledger/fabric/core/common/ccpackage"
 	"github.com/hyperledger/fabric/core/common/ccprovider"
 	"github.com/hyperledger/fabric/core/common/privdata"
 	validation "github.com/hyperledger/fabric/core/handlers/validation/api/capabilities"
@@ -71,75 +67,6 @@ func createTx(endorsedByDuplicatedIdentity bool) (*common.Envelope, error) {
 		return nil, err
 	}
 	return env, err
-}
-
-func processSignedCDS(cds *peer.ChaincodeDeploymentSpec, policy *common.SignaturePolicyEnvelope) ([]byte, error) {
-	env, err := ccpackage.OwnerCreateSignedCCDepSpec(cds, policy, nil)
-	if err != nil {
-		return nil, fmt.Errorf("could not create package %s", err)
-	}
-
-	b := protoutil.MarshalOrPanic(env)
-
-	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
-	if err != nil {
-		return nil, fmt.Errorf("could not create bootBCCSP %s", err)
-	}
-	ccpack := &ccprovider.SignedCDSPackage{GetHasher: cryptoProvider}
-	cd, err := ccpack.InitFromBuffer(b)
-	if err != nil {
-		return nil, fmt.Errorf("error owner creating package %s", err)
-	}
-
-	if err = ccpack.PutChaincodeToFS(); err != nil {
-		return nil, fmt.Errorf("error putting package on the FS %s", err)
-	}
-
-	cd.InstantiationPolicy = protoutil.MarshalOrPanic(policy)
-
-	return protoutil.MarshalOrPanic(cd), nil
-}
-
-func constructDeploymentSpec(name, path, version string, initArgs [][]byte, createFS bool) (*peer.ChaincodeDeploymentSpec, error) {
-	spec := &peer.ChaincodeSpec{Type: 1, ChaincodeId: &peer.ChaincodeID{Name: name, Path: path, Version: version}, Input: &peer.ChaincodeInput{Args: initArgs}}
-
-	codePackageBytes := bytes.NewBuffer(nil)
-	gz := gzip.NewWriter(codePackageBytes)
-	tw := tar.NewWriter(gz)
-
-	payload := []byte(name + path + version)
-	err := tw.WriteHeader(&tar.Header{
-		Name: "src/garbage.go",
-		Size: int64(len(payload)),
-		Mode: 0100644,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = tw.Write(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	tw.Close()
-	gz.Close()
-
-	chaincodeDeploymentSpec := &peer.ChaincodeDeploymentSpec{ChaincodeSpec: spec, CodePackage: codePackageBytes.Bytes()}
-
-	if createFS {
-		cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
-		if err != nil {
-			return nil, err
-		}
-		ccinfoFSImpl := &ccprovider.CCInfoFSImpl{GetHasher: cryptoProvider}
-		_, err = ccinfoFSImpl.PutChaincode(chaincodeDeploymentSpec)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return chaincodeDeploymentSpec, nil
 }
 
 func createCCDataRWsetWithCollection(nameK, nameV, version string, policy []byte, collectionConfigPackage []byte) ([]byte, error) {
@@ -762,7 +689,7 @@ func TestValidateDeployFail(t *testing.T) {
 
 	b = &common.Block{Data: &common.BlockData{Data: [][]byte{envBytes}}, Header: &common.BlockHeader{}}
 	err = v.Validate(b, "lscc", 0, 0, policy)
-	require.EqualError(t, err, fmt.Sprintf("LSCC invocation is attempting to write to namespace bogusbogus"))
+	require.EqualError(t, err, "LSCC invocation is attempting to write to namespace bogusbogus")
 }
 
 func TestAlreadyDeployed(t *testing.T) {
@@ -1322,7 +1249,7 @@ func TestInvalidateUpgradeBadVersion(t *testing.T) {
 	require.EqualError(t, err, fmt.Sprintf("Existing version of the cc on the ledger (%s) should be different from the upgraded one", ccver))
 }
 
-func validateUpgradeWithCollection(t *testing.T, ccver string, V1_2Validation bool) {
+func validateUpgradeWithCollection(t *testing.T, V1_2Validation bool) {
 	state := make(map[string]map[string][]byte)
 	state["lscc"] = make(map[string][]byte)
 
@@ -1344,7 +1271,7 @@ func validateUpgradeWithCollection(t *testing.T, ccver string, V1_2Validation bo
 	v := newCustomValidationInstance(sf, capabilities)
 
 	ccname := "mycc"
-	ccver = "2"
+	ccver := "2"
 
 	policy, err := getSignedByMSPMemberPolicy(mspid)
 	if err != nil {
@@ -1512,9 +1439,9 @@ func validateUpgradeWithCollection(t *testing.T, ccver string, V1_2Validation bo
 
 func TestValidateUpgradeWithCollection(t *testing.T) {
 	// with V1_2Validation enabled
-	validateUpgradeWithCollection(t, "v12-validation-enabled", true)
+	validateUpgradeWithCollection(t, true)
 	// with V1_2Validation disabled
-	validateUpgradeWithCollection(t, "v12-validation-disabled", false)
+	validateUpgradeWithCollection(t, false)
 }
 
 func TestValidateUpgradeWithPoliciesOK(t *testing.T) {
@@ -1575,11 +1502,11 @@ func TestValidateUpgradeWithNewFailAllIP(t *testing.T) {
 	// We run this test twice, once with the V11 capability (and expect
 	// a failure) and once without (and we expect success).
 
-	validateUpgradeWithNewFailAllIP(t, "v11-capabilityenabled", true, true)
-	validateUpgradeWithNewFailAllIP(t, "v11-capabilitydisabled", false, false)
+	validateUpgradeWithNewFailAllIP(t, true, true)
+	validateUpgradeWithNewFailAllIP(t, false, false)
 }
 
-func validateUpgradeWithNewFailAllIP(t *testing.T, ccver string, v11capability, expecterr bool) {
+func validateUpgradeWithNewFailAllIP(t *testing.T, v11capability, expecterr bool) {
 	state := make(map[string]map[string][]byte)
 	state["lscc"] = make(map[string][]byte)
 
@@ -1601,7 +1528,7 @@ func validateUpgradeWithNewFailAllIP(t *testing.T, ccver string, v11capability, 
 	v := newCustomValidationInstance(sf, capabilities)
 
 	ccname := "mycc"
-	ccver = "2"
+	ccver := "2"
 
 	// create lscc record with accept all instantiation policy
 	ipbytes, err := proto.Marshal(policydsl.AcceptAllPolicy)
@@ -1714,20 +1641,6 @@ var id msp.SigningIdentity
 var sid []byte
 var mspid string
 var channelID string = "testchannelid"
-
-type mockPolicyChecker struct{}
-
-func (c *mockPolicyChecker) CheckPolicy(channelID, policyName string, signedProp *peer.SignedProposal) error {
-	return nil
-}
-
-func (c *mockPolicyChecker) CheckPolicyBySignedData(channelID, policyName string, sd []*protoutil.SignedData) error {
-	return nil
-}
-
-func (c *mockPolicyChecker) CheckPolicyNoChannel(policyName string, signedProp *peer.SignedProposal) error {
-	return nil
-}
 
 func createCollectionConfig(collectionName string, signaturePolicyEnvelope *common.SignaturePolicyEnvelope,
 	requiredPeerCount int32, maximumPeerCount int32, blockToLive uint64,
@@ -1954,10 +1867,6 @@ func TestValidateRWSetAndCollectionForUpgrade(t *testing.T) {
 	// Test 6: modify the BlockToLive in an existing collection -> error
 	err = testValidateCollection(t, v, []*peer.CollectionConfig{coll1, coll2, coll3}, cdRWSet, lsccFunc, ac, chid)
 	require.EqualError(t, err, "the BlockToLive in the following existing collections must not be modified: [mycollection2]")
-}
-
-var mockMSPIDGetter = func(cid string) []string {
-	return []string{"SampleOrg"}
 }
 
 func TestMain(m *testing.M) {

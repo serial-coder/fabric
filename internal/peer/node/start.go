@@ -22,7 +22,6 @@ import (
 
 	docker "github.com/fsouza/go-dockerclient"
 	"github.com/golang/protobuf/proto"
-	"github.com/hyperledger/fabric-protos-go/common"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	discprotos "github.com/hyperledger/fabric-protos-go/discovery"
 	pb "github.com/hyperledger/fabric-protos-go/peer"
@@ -88,7 +87,6 @@ import (
 	gossipgossip "github.com/hyperledger/fabric/gossip/gossip"
 	gossipmetrics "github.com/hyperledger/fabric/gossip/metrics"
 	gossipprivdata "github.com/hyperledger/fabric/gossip/privdata"
-	"github.com/hyperledger/fabric/gossip/service"
 	gossipservice "github.com/hyperledger/fabric/gossip/service"
 	peergossip "github.com/hyperledger/fabric/internal/peer/gossip"
 	"github.com/hyperledger/fabric/internal/peer/version"
@@ -426,8 +424,8 @@ func serve(args []string) error {
 		ebMetadataProvider,
 	)
 
-	txProcessors := map[common.HeaderType]ledger.CustomTxProcessor{
-		common.HeaderType_CONFIG: &peer.ConfigTxProcessor{},
+	txProcessors := map[cb.HeaderType]ledger.CustomTxProcessor{
+		cb.HeaderType_CONFIG: &peer.ConfigTxProcessor{},
 	}
 
 	peerInstance.LedgerMgr = ledgermgmt.NewLedgerMgr(
@@ -803,7 +801,7 @@ func serve(args []string) error {
 	)
 
 	if coreConfig.DiscoveryEnabled {
-		registerDiscoveryService(
+		ds := createDiscoveryService(
 			coreConfig,
 			peerInstance,
 			peerServer,
@@ -815,6 +813,12 @@ func serve(args []string) error {
 			),
 			gossipService,
 		)
+		logger.Info("Discovery service activated")
+		discprotos.RegisterDiscoveryServer(peerServer.Server(), ds)
+	}
+
+	if coreConfig.GatewayOptions.Enabled {
+		logger.Info("Starting peer with Gateway enabled")
 	}
 
 	logger.Infof("Starting peer with ID=[%s], network ID=[%s], address=[%s]", coreConfig.PeerID, coreConfig.NetworkID, coreConfig.PeerAddress)
@@ -937,14 +941,14 @@ func createSelfSignedData() protoutil.SignedData {
 	}
 }
 
-func registerDiscoveryService(
+func createDiscoveryService(
 	coreConfig *peer.Config,
 	peerInstance *peer.Peer,
 	peerServer *comm.GRPCServer,
 	polMgr policies.ChannelPolicyManagerGetter,
 	metadataProvider *lifecycle.MetadataProvider,
 	gossipService *gossipservice.GossipService,
-) {
+) *discovery.Service {
 	mspID := coreConfig.LocalMSPID
 	localAccessPolicy := localPolicy(policydsl.SignedByAnyAdmin([]string{mspID}))
 	if coreConfig.DiscoveryOrgMembersAllowed {
@@ -955,7 +959,7 @@ func registerDiscoveryService(
 	gSup := gossip.NewDiscoverySupport(gossipService)
 	ccSup := ccsupport.NewDiscoverySupport(metadataProvider)
 	ea := endorsement.NewEndorsementAnalyzer(gSup, ccSup, acl, metadataProvider)
-	confSup := config.NewDiscoverySupport(config.CurrentConfigGetterFunc(func(channelID string) *common.Config {
+	confSup := config.NewDiscoverySupport(config.CurrentConfigGetterFunc(func(channelID string) *cb.Config {
 		channel := peerInstance.Channel(channelID)
 		if channel == nil {
 			return nil
@@ -968,14 +972,12 @@ func registerDiscoveryService(
 		return config
 	}))
 	support := discsupport.NewDiscoverySupport(acl, gSup, ea, confSup, acl)
-	svc := discovery.NewService(discovery.Config{
+	return discovery.NewService(discovery.Config{
 		TLS:                          peerServer.TLSEnabled(),
 		AuthCacheEnabled:             coreConfig.DiscoveryAuthCacheEnabled,
 		AuthCacheMaxSize:             coreConfig.DiscoveryAuthCacheMaxSize,
 		AuthCachePurgeRetentionRatio: coreConfig.DiscoveryAuthCachePurgeRetentionRatio,
 	}, support)
-	logger.Info("Discovery service activated")
-	discprotos.RegisterDiscoveryServer(peerServer.Server(), svc)
 }
 
 // create a CC listener using peer.chaincodeListenAddress (and if that's not set use peer.peerAddress)
@@ -1194,7 +1196,7 @@ func initGossipService(
 	secAdv := peergossip.NewSecurityAdvisor(mgmt.NewDeserializersManager(factory.GetDefault()))
 	bootstrap := viper.GetStringSlice("peer.gossip.bootstrap")
 
-	serviceConfig := service.GlobalConfig()
+	serviceConfig := gossipservice.GlobalConfig()
 	if serviceConfig.Endpoint != "" {
 		peerAddress = serviceConfig.Endpoint
 	}
