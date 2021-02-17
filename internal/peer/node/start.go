@@ -24,6 +24,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	discprotos "github.com/hyperledger/fabric-protos-go/discovery"
+	gatewayprotos "github.com/hyperledger/fabric-protos-go/gateway"
 	pb "github.com/hyperledger/fabric-protos-go/peer"
 	"github.com/hyperledger/fabric/bccsp/factory"
 	"github.com/hyperledger/fabric/common/cauthdsl"
@@ -91,6 +92,7 @@ import (
 	peergossip "github.com/hyperledger/fabric/internal/peer/gossip"
 	"github.com/hyperledger/fabric/internal/peer/version"
 	"github.com/hyperledger/fabric/internal/pkg/comm"
+	gatewayserver "github.com/hyperledger/fabric/internal/pkg/gateway/server"
 	"github.com/hyperledger/fabric/msp"
 	"github.com/hyperledger/fabric/msp/mgmt"
 	"github.com/hyperledger/fabric/protoutil"
@@ -203,7 +205,7 @@ func serve(args []string) error {
 
 	logger.Infof("Starting %s", version.GetInfo())
 
-	//obtain coreConfiguration
+	// obtain coreConfiguration
 	coreConfig, err := peer.GlobalConfig()
 	if err != nil {
 		return err
@@ -336,8 +338,8 @@ func serve(args []string) error {
 		mgmt.NewLocalMSPPrincipalGetter(factory.GetDefault()),
 	)
 
-	//startup aclmgmt with default ACL providers (resource based and default 1.0 policies based).
-	//Users can pass in their own ACLProvider to RegisterACLProvider (currently unit tests do this)
+	// startup aclmgmt with default ACL providers (resource based and default 1.0 policies based).
+	// Users can pass in their own ACLProvider to RegisterACLProvider (currently unit tests do this)
 	aclProvider := aclmgmt.NewACLProvider(
 		aclmgmt.ResourceGetter(peerInstance.GetStableChannelConfig),
 		policyChecker,
@@ -408,7 +410,7 @@ func serve(args []string) error {
 	chaincodeCustodian := lifecycle.NewChaincodeCustodian()
 
 	externalBuilderOutput := filepath.Join(coreconfig.GetPath("peer.fileSystemPath"), "externalbuilder", "builds")
-	if err := os.MkdirAll(externalBuilderOutput, 0700); err != nil {
+	if err := os.MkdirAll(externalBuilderOutput, 0o700); err != nil {
 		logger.Panicf("could not create externalbuilder build output dir: %s", err)
 	}
 
@@ -511,7 +513,7 @@ func serve(args []string) error {
 		logger.Panicf("Failed to create chaincode server: %s", err)
 	}
 
-	//get user mode
+	// get user mode
 	userRunsCC := chaincode.IsDevMode()
 	tlsEnabled := coreConfig.PeerTLSEnabled
 
@@ -819,6 +821,12 @@ func serve(args []string) error {
 
 	if coreConfig.GatewayOptions.Enabled {
 		logger.Info("Starting peer with Gateway enabled")
+		gs, err := gatewayserver.CreateGatewayServer(serverEndorser)
+		if err != nil {
+			logger.Panicf("Failed to create Gateway server: %s", err)
+		}
+		gatewayprotos.RegisterGatewayServer(peerServer.Server(), gs)
+		logger.Info("Gateway server activated")
 	}
 
 	logger.Infof("Starting peer with ID=[%s], network ID=[%s], address=[%s]", coreConfig.PeerID, coreConfig.NetworkID, coreConfig.PeerAddress)
@@ -1174,7 +1182,6 @@ func initGossipService(
 	deliverServiceConfig *deliverservice.DeliverServiceConfig,
 	privdataConfig *gossipprivdata.PrivdataConfig,
 ) (*gossipservice.GossipService, error) {
-
 	var certs *gossipcommon.TLSCertificates
 	if peerServer.TLSEnabled() {
 		serverCert := peerServer.ServerCertificate()

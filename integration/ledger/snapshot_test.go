@@ -41,9 +41,7 @@ import (
 	"github.com/tedsuo/ifrit"
 )
 
-const (
-	testchannelID = "testchannel"
-)
+const testchannelID = "testchannel"
 
 var _ bool = Describe("Snapshot Generation and Bootstrap", func() {
 	var (
@@ -599,7 +597,8 @@ func initAndStartFourOrgsNetwork() *setup {
 		Organization: "Org4",
 		Channels: []*nwo.PeerChannel{
 			{Name: testchannelID, Anchor: true},
-		}})
+		},
+	})
 
 	n := nwo.New(config, testDir, client, StartPort(), components)
 	n.GenerateConfigTree()
@@ -809,7 +808,7 @@ func joinBySnapshot(n *nwo.Network, orderer *nwo.Orderer, peer *nwo.Peer, channe
 	n.JoinChannelBySnapshot(snapshotDir, peer)
 
 	By("calling JoinBySnapshotStatus")
-	checkStatus := func() []byte { return n.JoinBySnapshotStatus(peer) }
+	checkStatus := func() string { return n.JoinBySnapshotStatus(peer) }
 	Eventually(checkStatus, n.EventuallyTimeout, 10*time.Second).Should(ContainSubstring("No joinbysnapshot operation is in progress"))
 
 	By("waiting for the new peer to have the same ledger height")
@@ -822,7 +821,7 @@ func joinBySnapshot(n *nwo.Network, orderer *nwo.Orderer, peer *nwo.Peer, channe
 	Expect(err).NotTo(HaveOccurred())
 	Eventually(sess, n.EventuallyTimeout).Should(gexec.Exit(0))
 	channelInfoStr := strings.TrimPrefix(string(sess.Buffer().Contents()[:]), "Blockchain info:")
-	var bcInfo = cb.BlockchainInfo{}
+	bcInfo := cb.BlockchainInfo{}
 	err = json.Unmarshal([]byte(channelInfoStr), &bcInfo)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(bcInfo.Height).To(Equal(uint64(channelHeight)))

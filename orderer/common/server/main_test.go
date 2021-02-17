@@ -87,7 +87,7 @@ func copyYamlFiles(src, dst string) {
 		if err != nil {
 			os.Exit(-1)
 		}
-		err = ioutil.WriteFile(filepath.Join(dst, file), fileBytes, 0644)
+		err = ioutil.WriteFile(filepath.Join(dst, file), fileBytes, 0o644)
 		if err != nil {
 			os.Exit(-1)
 		}
@@ -118,7 +118,8 @@ func TestInitializeProfilingService(t *testing.T) {
 				Profile: localconfig.Profile{
 					Enabled: true,
 					Address: listenAddr,
-				}},
+				},
+			},
 			Kafka: localconfig.Kafka{Verbose: true},
 		},
 	)
@@ -490,7 +491,6 @@ func TestInitSystemChannelWithJoinBlock(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, uint64(0), ledger.Height())
 	})
-
 }
 
 func TestExtractSystemChannel(t *testing.T) {
@@ -825,7 +825,7 @@ func TestUpdateTrustedRoots(t *testing.T) {
 		ordererRootCAsByChain: make(map[string][][]byte),
 	}
 
-	clusterConf := initializeClusterClientConfig(conf)
+	clusterConf, _ := initializeClusterClientConfig(conf)
 	predDialer := &cluster.PredicateDialer{
 		Config: clusterConf,
 	}
@@ -1179,17 +1179,14 @@ func genesisConfig(t *testing.T, genesisFile string) (*localconfig.TopLevel, str
 func panicMsg(f func()) string {
 	var message interface{}
 	func() {
-
 		defer func() {
 			message = recover()
 		}()
 
 		f()
-
 	}()
 
 	return message.(string)
-
 }
 
 func produceGenesisFile(t *testing.T, profile, channelID string) string {
