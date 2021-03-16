@@ -8,7 +8,6 @@ package gateway
 import (
 	"context"
 
-	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric-protos-go/peer"
 	"github.com/hyperledger/fabric/common/flogging"
 	"google.golang.org/grpc"
@@ -19,6 +18,7 @@ var logger = flogging.MustGetLogger("gateway")
 // Server represents the GRPC server for the Gateway.
 type Server struct {
 	registry *registry
+	options  Options
 }
 
 type EndorserServerAdapter struct {
@@ -30,20 +30,19 @@ func (e *EndorserServerAdapter) ProcessProposal(ctx context.Context, req *peer.S
 }
 
 // CreateServer creates an embedded instance of the Gateway.
-func CreateServer(localEndorser peer.EndorserClient, discovery Discovery, selfEndpoint string) *Server {
+func CreateServer(localEndorser peer.EndorserClient, discovery Discovery, localEndpoint string, localMSPID string, options Options) *Server {
 	gwServer := &Server{
 		registry: &registry{
-			localEndorser:       localEndorser,
+			localEndorser:       &endorser{client: localEndorser, endpointConfig: &endpointConfig{address: localEndpoint, mspid: localMSPID}},
 			discovery:           discovery,
-			selfEndpoint:        selfEndpoint,
 			logger:              logger,
-			endorserFactory:     newEndorser,
-			ordererFactory:      newOrderer,
-			remoteEndorsers:     map[string]peer.EndorserClient{},
-			broadcastClients:    map[string]ab.AtomicBroadcast_BroadcastClient{},
+			endpointFactory:     &endpointFactory{timeout: options.EndorsementTimeout},
+			remoteEndorsers:     map[string]*endorser{},
+			broadcastClients:    map[string]*orderer{},
 			tlsRootCerts:        map[string][][]byte{},
 			channelsInitialized: map[string]bool{},
 		},
+		options: options,
 	}
 
 	return gwServer

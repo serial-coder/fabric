@@ -213,10 +213,6 @@ func serve(args []string) error {
 
 	platformRegistry := platforms.NewRegistry(platforms.SupportedPlatforms...)
 
-	identityDeserializerFactory := func(chainID string) msp.IdentityDeserializer {
-		return mgmt.GetManagerForChain(chainID)
-	}
-
 	opsSystem := newOperationsSystem(coreConfig)
 	err = opsSystem.Start()
 	if err != nil {
@@ -227,10 +223,6 @@ func serve(args []string) error {
 	metricsProvider := opsSystem.Provider
 	logObserver := floggingmetrics.NewObserver(metricsProvider)
 	flogging.SetObserver(logObserver)
-
-	mspID := coreConfig.LocalMSPID
-
-	membershipInfoProvider := privdata.NewMembershipInfoProvider(mspID, createSelfSignedData(), identityDeserializerFactory)
 
 	chaincodeInstallPath := filepath.Join(coreconfig.GetPath("peer.fileSystemPath"), "lifecycle", "chaincodes")
 	ccStore := persistence.NewStore(chaincodeInstallPath)
@@ -298,16 +290,30 @@ func serve(args []string) error {
 		OrdererEndpointOverrides: deliverServiceConfig.OrdererEndpointOverrides,
 	}
 
+	identityDeserializerFactory := func(channelName string) msp.IdentityDeserializer {
+		if channel := peerInstance.Channel(channelName); channel != nil {
+			return channel.MSPManager()
+		}
+		return nil
+	}
+
+	mspID := coreConfig.LocalMSPID
 	localMSP := mgmt.GetLocalMSP(factory.GetDefault())
+
 	signingIdentity, err := localMSP.GetDefaultSigningIdentity()
 	if err != nil {
 		logger.Panicf("Could not get the default signing identity from the local MSP: [%+v]", err)
 	}
-
 	signingIdentityBytes, err := signingIdentity.Serialize()
 	if err != nil {
 		logger.Panicf("Failed to serialize the signing identity: %v", err)
 	}
+
+	membershipInfoProvider := privdata.NewMembershipInfoProvider(
+		mspID,
+		createSelfSignedData(signingIdentity),
+		identityDeserializerFactory,
+	)
 
 	expirationLogger := flogging.MustGetLogger("certmonitor")
 	crypto.TrackExpiration(
@@ -323,19 +329,9 @@ func serve(args []string) error {
 
 	policyMgr := policies.PolicyManagerGetterFunc(peerInstance.GetPolicyManager)
 
-	deliverGRPCClient, err := comm.NewGRPCClient(comm.ClientConfig{
-		Timeout: deliverServiceConfig.ConnectionTimeout,
-		KaOpts:  deliverServiceConfig.KeepaliveOptions,
-		SecOpts: deliverServiceConfig.SecOpts,
-	})
-	if err != nil {
-		logger.Panicf("Could not create the deliver grpc client: [%+v]", err)
-	}
-
 	policyChecker := policy.NewPolicyChecker(
 		policies.PolicyManagerGetterFunc(peerInstance.GetPolicyManager),
 		mgmt.GetLocalMSP(factory.GetDefault()),
-		mgmt.NewLocalMSPPrincipalGetter(factory.GetDefault()),
 	)
 
 	// startup aclmgmt with default ACL providers (resource based and default 1.0 policies based).
@@ -459,7 +455,6 @@ func serve(args []string) error {
 		signingIdentity,
 		cs,
 		coreConfig.PeerAddress,
-		deliverGRPCClient,
 		deliverServiceConfig,
 		privdataConfig,
 	)
@@ -601,12 +596,15 @@ func serve(args []string) error {
 	lsccInst := &lscc.SCC{
 		BuiltinSCCs: builtinSCCs,
 		Support: &lscc.SupportImpl{
-			GetMSPIDs: peerInstance.GetMSPIDs,
+			GetMSPIDs:               peerInstance.GetMSPIDs,
+			GetIdentityDeserializer: identityDeserializerFactory,
 		},
-		SCCProvider:        &lscc.PeerShim{Peer: peerInstance},
-		ACLProvider:        aclProvider,
-		GetMSPIDs:          peerInstance.GetMSPIDs,
-		PolicyChecker:      policyChecker,
+		SCCProvider: &lscc.PeerShim{Peer: peerInstance},
+		ACLProvider: aclProvider,
+		GetMSPIDs:   peerInstance.GetMSPIDs,
+		GetMSPManager: func(channelName string) msp.MSPManager {
+			return peerInstance.Channel(channelName).MSPManager()
+		},
 		BCCSP:              factory.GetDefault(),
 		BuildRegistry:      buildRegistry,
 		ChaincodeBuilder:   containerRouter,
@@ -696,7 +694,6 @@ func serve(args []string) error {
 		lifecycleValidatorCommitter,
 		lsccInst,
 		lifecycleValidatorCommitter,
-		policyChecker,
 		peerInstance,
 		factory.GetDefault(),
 	)
@@ -825,7 +822,13 @@ func serve(args []string) error {
 			logger.Info("Starting peer with Gateway enabled")
 			gatewayprotos.RegisterGatewayServer(
 				peerServer.Server(),
-				gateway.CreateServer(&gateway.EndorserServerAdapter{Server: serverEndorser}, discoveryService, peerInstance.GossipService.SelfMembershipInfo().Endpoint),
+				gateway.CreateServer(
+					&gateway.EndorserServerAdapter{Server: serverEndorser},
+					discoveryService,
+					peerInstance.GossipService.SelfMembershipInfo().Endpoint,
+					coreConfig.LocalMSPID,
+					coreConfig.GatewayOptions,
+				),
 			)
 		} else {
 			logger.Warning("Discovery service must be enabled for embedded gateway")
@@ -934,8 +937,7 @@ func localPolicy(policyObject proto.Message) policies.Policy {
 	return policy
 }
 
-func createSelfSignedData() protoutil.SignedData {
-	sID := mgmt.GetLocalSigningIdentityOrPanic(factory.GetDefault())
+func createSelfSignedData(sID msp.SigningIdentity) protoutil.SignedData {
 	msg := make([]byte, 32)
 	sig, err := sID.Sign(msg)
 	if err != nil {
@@ -1148,7 +1150,7 @@ func secureDialOpts(credSupport *comm.CredentialSupport) func() []grpc.DialOptio
 		// set max send/recv msg sizes
 		dialOpts = append(
 			dialOpts,
-			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(comm.MaxRecvMsgSize), grpc.MaxCallSendMsgSize(comm.MaxSendMsgSize)),
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(comm.DefaultMaxRecvMsgSize), grpc.MaxCallSendMsgSize(comm.DefaultMaxSendMsgSize)),
 		)
 		// set the keepalive options
 		kaOpts := comm.DefaultKeepaliveOptions
@@ -1158,7 +1160,7 @@ func secureDialOpts(credSupport *comm.CredentialSupport) func() []grpc.DialOptio
 		if viper.IsSet("peer.keepalive.client.timeout") {
 			kaOpts.ClientTimeout = viper.GetDuration("peer.keepalive.client.timeout")
 		}
-		dialOpts = append(dialOpts, comm.ClientKeepaliveOptions(kaOpts)...)
+		dialOpts = append(dialOpts, kaOpts.ClientKeepaliveOptions()...)
 
 		if viper.GetBool("peer.tls.enabled") {
 			dialOpts = append(dialOpts, grpc.WithTransportCredentials(credSupport.GetPeerCredentials()))
@@ -1181,7 +1183,6 @@ func initGossipService(
 	signer msp.SigningIdentity,
 	credSupport *comm.CredentialSupport,
 	peerAddress string,
-	deliverGRPCClient *comm.GRPCClient,
 	deliverServiceConfig *deliverservice.DeliverServiceConfig,
 	privdataConfig *gossipprivdata.PrivdataConfig,
 ) (*gossipservice.GossipService, error) {
@@ -1197,13 +1198,15 @@ func initGossipService(
 		certs.TLSClientCert.Store(&clientCert)
 	}
 
+	localMSP := mgmt.GetLocalMSP(factory.GetDefault())
+	deserManager := peergossip.NewDeserializersManager(localMSP)
 	messageCryptoService := peergossip.NewMCS(
 		policyMgr,
 		signer,
-		mgmt.NewDeserializersManager(factory.GetDefault()),
+		deserManager,
 		factory.GetDefault(),
 	)
-	secAdv := peergossip.NewSecurityAdvisor(mgmt.NewDeserializersManager(factory.GetDefault()))
+	secAdv := peergossip.NewSecurityAdvisor(deserManager)
 	bootstrap := viper.GetStringSlice("peer.gossip.bootstrap")
 
 	serviceConfig := gossipservice.GlobalConfig()
@@ -1224,7 +1227,6 @@ func initGossipService(
 		secAdv,
 		secureDialOpts(credSupport),
 		credSupport,
-		deliverGRPCClient,
 		gossipConfig,
 		serviceConfig,
 		privdataConfig,
