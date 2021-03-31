@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/hyperledger/fabric-protos-go/common"
 	gp "github.com/hyperledger/fabric-protos-go/gateway"
 	"github.com/hyperledger/fabric-protos-go/peer"
 	"github.com/hyperledger/fabric/protoutil"
@@ -43,7 +44,11 @@ func (gs *Server) Evaluate(ctx context.Context, request *gp.EvaluateRequest) (*g
 		return nil, status.Errorf(codes.NotFound, "no endorsing peers found for channel: %s", request.ChannelId)
 	}
 
-	endorser := endorsers[0] // TODO choose suitable peer based on block height, etc (future user story)
+	endorser := endorsers[0] // The peer with highest ledger height is first in the list
+
+	ctx, cancel := context.WithTimeout(ctx, gs.options.EndorsementTimeout)
+	defer cancel()
+
 	response, err := endorser.client.ProcessProposal(ctx, signedProposal)
 	if err != nil {
 		return nil, rpcError(
@@ -101,17 +106,15 @@ func (gs *Server) Endorse(ctx context.Context, request *gp.EndorseRequest) (*gp.
 		go func(e *endorser) {
 			defer wg.Done()
 			response, err := e.client.ProcessProposal(ctx, signedProposal)
-			var detail *gp.EndpointError
-			if err != nil {
-				detail = &gp.EndpointError{Address: e.address, MspId: e.mspid, Message: err.Error()}
-				responseCh <- &endorserResponse{err: detail}
-				return
-			}
-			if response.Response.Status < 200 || response.Response.Status >= 400 {
+			switch {
+			case err != nil:
+				responseCh <- &endorserResponse{err: endpointError(e, err)}
+			case response.Response.Status < 200 || response.Response.Status >= 400:
 				// this is an error case and will be returned in the error details to the client
-				detail = &gp.EndpointError{Address: e.address, MspId: e.mspid, Message: fmt.Sprintf("error %d, %s", response.Response.Status, response.Response.Message)}
+				responseCh <- &endorserResponse{err: endpointError(e, fmt.Errorf("error %d, %s", response.Response.Status, response.Response.Message))}
+			default:
+				responseCh <- &endorserResponse{pr: response}
 			}
-			responseCh <- &endorserResponse{pr: response, err: detail}
 		}(e)
 	}
 	wg.Wait()
@@ -148,15 +151,19 @@ func (gs *Server) Endorse(ctx context.Context, request *gp.EndorseRequest) (*gp.
 	return endorseResponse, nil
 }
 
-// Submit will send the signed transaction to the ordering service.  The output stream will close
-// once the transaction is committed on a sufficient number of remoteEndorsers according to a defined policy.
+// Submit will send the signed transaction to the ordering service. The response indicates whether the transaction was
+// successfully received by the orderer. This does not imply successful commit of the transaction, only that is has
+// been delivered to the orderer.
 func (gs *Server) Submit(ctx context.Context, request *gp.SubmitRequest) (*gp.SubmitResponse, error) {
 	if request == nil {
 		return nil, status.Error(codes.InvalidArgument, "a submit request is required")
 	}
 	txn := request.GetPreparedTransaction()
 	if txn == nil {
-		return nil, status.Error(codes.InvalidArgument, "a signed prepared transaction is required")
+		return nil, status.Error(codes.InvalidArgument, "a prepared transaction is required")
+	}
+	if len(txn.Signature) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "prepared transaction must be signed")
 	}
 	orderers, err := gs.registry.orderers(request.ChannelId)
 	if err != nil {
@@ -168,8 +175,17 @@ func (gs *Server) Submit(ctx context.Context, request *gp.SubmitRequest) (*gp.Su
 	}
 
 	orderer := orderers[0] // send to first orderer for now
+
+	broadcast, err := orderer.client.Broadcast(ctx)
+	if err != nil {
+		return nil, rpcError(
+			codes.Aborted,
+			"failed to send transaction to orderer",
+			&gp.EndpointError{Address: orderer.address, MspId: orderer.mspid, Message: err.Error()},
+		)
+	}
 	logger.Info("Submitting txn to orderer")
-	if err := orderer.client.Send(txn); err != nil {
+	if err := broadcast.Send(txn); err != nil {
 		return nil, rpcError(
 			codes.Aborted,
 			"failed to send transaction to orderer",
@@ -177,7 +193,7 @@ func (gs *Server) Submit(ctx context.Context, request *gp.SubmitRequest) (*gp.Su
 		)
 	}
 
-	response, err := orderer.client.Recv()
+	response, err := broadcast.Recv()
 	if err != nil {
 		return nil, rpcError(
 			codes.Aborted,
@@ -190,13 +206,35 @@ func (gs *Server) Submit(ctx context.Context, request *gp.SubmitRequest) (*gp.Su
 		return nil, status.Error(codes.Aborted, "received nil response from orderer")
 	}
 
+	if response.Status != common.Status_SUCCESS {
+		return nil, status.Errorf(codes.Aborted, "received unsuccessful response from orderer: %s", common.Status_name[int32(response.Status)])
+	}
+
 	return &gp.SubmitResponse{}, nil
 }
 
-// CommitStatus will something something.
+// CommitStatus returns the validation code for a specific transaction on a specific channel. If the transaction is
+// already committed, the status will be returned immediately; otherwise this call will block and return only when
+// the transaction commits or the context is cancelled.
+//
+// If the transaction commit status cannot be returned, for example if the specified channel does not exist, a
+// FailedPrecondition error will be returned.
 func (gs *Server) CommitStatus(ctx context.Context, request *gp.CommitStatusRequest) (*gp.CommitStatusResponse, error) {
 	if request == nil {
 		return nil, status.Error(codes.InvalidArgument, "a commit status request is required")
 	}
-	return nil, status.Error(codes.Unimplemented, "Not implemented")
+
+	txStatus, err := gs.commitFinder.TransactionStatus(ctx, request.ChannelId, request.TransactionId)
+	if err != nil {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+
+	response := &gp.CommitStatusResponse{
+		Result: txStatus,
+	}
+	return response, nil
+}
+
+func endpointError(e *endorser, err error) *gp.EndpointError {
+	return &gp.EndpointError{Address: e.address, MspId: e.mspid, Message: err.Error()}
 }

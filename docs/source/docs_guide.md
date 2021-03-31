@@ -96,17 +96,17 @@ fabric/docs
 ```
 
 Spend a little time navigating the [docs
-folder](https://github.com/hyperledger/fabric/tree/master/docs) in the
+folder](https://github.com/hyperledger/fabric/tree/main/docs) in the
 Hyperledger Fabric repository. Click on the following links to see how different
 source files map to their corresponding published topics.
 
-* [`/docs/source/index.rst`](https://raw.githubusercontent.com/hyperledger/fabric/master/docs/source/index.rst) maps to [Hyperledger Fabric title page](https://hyperledger-fabric.readthedocs.io/en/{RTD_TAG}/)
+* [`/docs/source/index.rst`](https://raw.githubusercontent.com/hyperledger/fabric/main/docs/source/index.rst) maps to [Hyperledger Fabric title page](https://hyperledger-fabric.readthedocs.io/en/{RTD_TAG}/)
 
-* [`/docs/source/developapps/developing-applications.rst`](https://raw.githubusercontent.com/hyperledger/fabric/master/docs/source/developapps/developing_applications.rst)
+* [`/docs/source/developapps/developing-applications.rst`](https://raw.githubusercontent.com/hyperledger/fabric/main/docs/source/developapps/developing_applications.rst)
   maps to [Developing
   applications](https://hyperledger-fabric.readthedocs.io/en/{RTD_TAG}/developapps/developing_applications.html)
 
-* [`/docs/source/peers/peers.md`](https://raw.githubusercontent.com/hyperledger/fabric/master/docs/source/peers/peers.md)
+* [`/docs/source/peers/peers.md`](https://raw.githubusercontent.com/hyperledger/fabric/main/docs/source/peers/peers.md)
   maps to
   [Peers](https://hyperledger-fabric.readthedocs.io/en/{RTD_TAG}/peers/peers.html)
 
@@ -205,13 +205,14 @@ your GitHub account.
    For International Languages (Malayalam as an example):
    ```bash
    git clone git@github.com:hyperledger/fabric-docs-i18n.git
-   cd fabric
+   cd fabric-docs-i18n
    make docs-lang-ml_IN
    ```
 
-   The `make` command generates documentation html files in the `build/html/`
+   The `make` command generates documentation html files in the `docs/build/html/`
    folder which you can now view locally; simply navigate your browser to the
-   `build/html/index.html` file.
+   `docs/build/html/index.html` file. For International Languages, you need to read `docs/build/html/` as
+   `docs/locale/${LANG_CODE}/_build/html/` (e.g., `docs/locale/ml_IN/_build/html/`).
 
 4. Now make a small change to a file, and rebuild the documentation to verify
    that your change was as expected. Every time you make a change to the
@@ -222,7 +223,7 @@ your GitHub account.
 
    ```bash
    sudo apt-get install apache2
-   cd build/html
+   cd docs/build/html
    sudo cp -r * /var/www/html/
    ```
 
@@ -282,11 +283,11 @@ Japanese translation must be approved by a Japanese maintainer, and so on. You
 can find the maintainers listed in the following `CODEOWNERS` files:
 
 * US English
-  [`CODEOWNERS`](https://github.com/hyperledger/fabric/blob/master/CODEOWNERS)
+  [`CODEOWNERS`](https://github.com/hyperledger/fabric/blob/main/CODEOWNERS)
   and their [maintainer GitHub
   IDs](https://github.com/orgs/hyperledger/teams/fabric-core-doc-maintainers)
 * International language
-  [`CODEOWNERS`](https://github.com/hyperledger/fabric-docs-i18n/blob/master/CODEOWNERS)
+  [`CODEOWNERS`](https://github.com/hyperledger/fabric-docs-i18n/blob/main/CODEOWNERS)
   and their [maintainer GitHub
   IDs](https://github.com/orgs/hyperledger/teams/fabric-contributors)
 
